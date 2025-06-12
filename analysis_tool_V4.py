@@ -1,27 +1,31 @@
-# final_interactive_tool_v3.py
+# final_interactive_tool_v4.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# --- 數據處理函式 ---
+# --- 數據處理函式 (最終修正版) ---
 def load_and_clean_data(uploaded_file):
     if uploaded_file is None:
         return None
     try:
-        # 從使用者告知的第三行開始讀取 (header=2)
-        uploaded_file.seek(0) # 確保檔案指標在開頭
-        df = pd.read_csv(uploaded_file, header=2, thousands=',', low_memory=False)
+        # 關鍵修正：從第一行讀取標題 (header=0)，不再跳過
+        uploaded_file.seek(0) 
+        df = pd.read_csv(uploaded_file, header=0, thousands=',', low_memory=False)
+        
         df.columns = df.columns.str.strip()
         
         time_column = 'Time' 
         if time_column not in df.columns:
-            st.error(f"錯誤：在第 3 行中找不到名為 '{time_column}' 的時間欄位。")
+            st.error(f"錯誤：找不到名為 '{time_column}' 的時間欄位。")
             st.write("偵測到的欄位有：", df.columns.tolist())
             return None
 
-        # 在轉換前，先強制清理欄位中的空格與不可見字元
+        # 清理時間欄位中的不可見字元
         time_series = df[time_column].astype(str).str.strip()
-        df['Time_Cleaned'] = pd.to_datetime(time_series, format='%H:%M:%S:%f', errors='coerce')
+        # 修正：部分log檔的時間格式在毫秒部分使用'.'，部分使用':'，此處統一替換
+        time_series_cleaned = time_series.str.replace(r':(\d{3})$', r'.\1', regex=True)
+        
+        df['Time_Cleaned'] = pd.to_datetime(time_series_cleaned, format='%H:%M:%S.%f', errors='coerce')
         
         df.dropna(subset=['Time_Cleaned'], inplace=True)
         if df.empty:
@@ -37,30 +41,23 @@ def load_and_clean_data(uploaded_file):
 
 # --- 動態圖表繪製函式 ---
 def generate_flexible_chart(df, left_col, right_col, x_limits, y_limits):
-    if df is None or left_col is None:
-        return None
-
+    if df is None or left_col is None: return None
     df_chart = df.copy()
     
-    # 套用X軸範圍過濾
     if x_limits:
         df_chart = df_chart[(df_chart['Elapsed Time (s)'] >= x_limits[0]) & (df_chart['Elapsed Time (s)'] <= x_limits[1])]
     
-    # 轉換Y軸數值
     df_chart.loc[:, 'left_val'] = pd.to_numeric(df_chart[left_col], errors='coerce')
     if right_col and right_col != 'None':
         df_chart.loc[:, 'right_val'] = pd.to_numeric(df_chart[right_col], errors='coerce')
 
-    # 開始繪圖
     fig, ax1 = plt.subplots(figsize=(12, 6))
     plt.title(f'{left_col} {"& " + right_col if right_col and right_col != "None" else ""}', fontsize=16)
-    
     color = 'tab:blue'
     ax1.set_xlabel('Time (seconds)', fontsize=12)
     ax1.set_ylabel(left_col, color=color, fontsize=12)
     ax1.plot(df_chart['Elapsed Time (s)'], df_chart['left_val'], color=color)
-    ax1.tick_params(axis='y', labelcolor=color)
-    ax1.grid(True, linestyle='--', linewidth=0.5)
+    ax1.tick_params(axis='y', labelcolor=color); ax1.grid(True, linestyle='--', linewidth=0.5)
 
     if right_col and right_col != 'None':
         ax2 = ax1.twinx()
@@ -112,17 +109,8 @@ if uploaded_log_file is not None:
             y2_limits = (y2_min, y2_max) if use_custom_y2 else None
         
         st.header("動態比較圖表")
-        fig = generate_flexible_chart(
-            df, 
-            left_y_axis, 
-            right_y_axis, 
-            (x_min, x_max) if use_custom_x else None, 
-            {'left': (y1_min, y1_max) if use_custom_y1 else None, 'right': y2_limits}
-        )
+        fig = generate_flexible_chart(df, left_y_axis, right_y_axis, (x_min, x_max) if use_custom_x else None, {'left': (y1_min, y1_max) if use_custom_y1 else None, 'right': y2_limits})
         
-        if fig:
-            st.pyplot(fig)
-        else:
-            st.warning("無法產生圖表，請確認選擇的欄位。")
+        if fig: st.pyplot(fig)
 else:
     st.sidebar.info("請上傳您的 Log File 開始分析。")
