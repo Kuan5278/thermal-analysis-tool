@@ -1342,6 +1342,67 @@ class PTATRenderer:
         self.stats_calc = StatisticsCalculator()
         self.chart_gen = ChartGenerator()
     
+    def render_controls(self):
+        """渲染控制面板"""
+        st.sidebar.markdown("### ⚙️ PTAT 圖表設定")
+        
+        numeric_columns = self.log_data.numeric_columns
+        if not numeric_columns:
+            return None, None, None, None, None
+        
+        st.sidebar.markdown("#### 🎯 參數選擇")
+        
+        # 尋找預設的左軸變數 (MSR Package Temperature)
+        default_left_index = 0
+        for i, col in enumerate(numeric_columns):
+            if 'MSR' in col and 'Package' in col and 'Temperature' in col:
+                default_left_index = i
+                break
+        
+        left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=default_left_index)
+        
+        # 尋找預設的右軸變數 (Package Power)
+        right_y_axis_options = ['None'] + numeric_columns
+        default_right_index = 0
+        for i, col in enumerate(right_y_axis_options):
+            if 'Package' in col and 'Power' in col:
+                default_right_index = i
+                break
+        
+        right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=default_right_index)
+        
+        st.sidebar.markdown("#### ⏱️ 時間範圍設定")
+        
+        time_min, time_max = self.log_data.get_time_range()
+        x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
+        
+        st.sidebar.markdown("#### 📏 Y軸範圍設定")
+        
+        # 左側Y軸範圍設定
+        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="ptat_left_y")
+        left_y_range = None
+        if left_y_range_enabled:
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                left_y_min = st.number_input("左Y軸最小值", value=0.0, key="ptat_left_y_min")
+            with col2:
+                left_y_max = st.number_input("左Y軸最大值", value=100.0, key="ptat_left_y_max")
+            left_y_range = (left_y_min, left_y_max)
+        
+        # 右側Y軸範圍設定（只有在選擇右軸變數時才顯示）
+        right_y_range = None
+        if right_y_axis and right_y_axis != 'None':
+            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="ptat_right_y")
+            if right_y_range_enabled:
+                col1, col2 = st.sidebar.columns(2)
+                with col1:
+                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key="ptat_right_y_min")
+                with col2:
+                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key="ptat_right_y_max")
+                right_y_range = (right_y_min, right_y_max)
+        
+        return left_y_axis, right_y_axis, x_range, left_y_range, right_y_range
+    
     def render(self):
         """渲染完整UI"""
         st.markdown("""
@@ -1353,36 +1414,13 @@ class PTATRenderer:
         
         st.success(f"✅ 數據載入成功：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
         
-        # PTAT專用UI邏輯
-        numeric_columns = self.log_data.numeric_columns
-        if numeric_columns:
-            st.sidebar.markdown("### ⚙️ PTAT 圖表設定")
-            
-            # 尋找預設的左軸變數 (MSR Package Temperature)
-            default_left_index = 0
-            for i, col in enumerate(numeric_columns):
-                if 'MSR' in col and 'Package' in col and 'Temperature' in col:
-                    default_left_index = i
-                    break
-            
-            left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=default_left_index)
-            
-            # 尋找預設的右軸變數 (Package Power)
-            right_y_axis_options = ['None'] + numeric_columns
-            default_right_index = 0
-            for i, col in enumerate(right_y_axis_options):
-                if 'Package' in col and 'Power' in col:
-                    default_right_index = i
-                    break
-            
-            right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=default_right_index)
-            
-            time_min, time_max = self.log_data.get_time_range()
-            x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
-            
+        # 渲染控制面板
+        left_y_axis, right_y_axis, x_range, left_y_range, right_y_range = self.render_controls()
+        
+        if left_y_axis:
             # 顯示圖表
             st.markdown("### 📊 PTAT CPU 性能監控圖表")
-            chart = self.chart_gen.generate_flexible_chart(self.log_data, left_y_axis, right_y_axis, x_range)
+            chart = self.chart_gen.generate_flexible_chart(self.log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
             if chart:
                 st.pyplot(chart)
             
@@ -1429,11 +1467,15 @@ class YokogawaRenderer:
         x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
         
         if chart_mode == "全通道溫度圖":
+            st.sidebar.markdown("#### 📏 Y軸範圍設定")
             y_range_enabled = st.sidebar.checkbox("啟用Y軸範圍限制")
             y_range = None
             if y_range_enabled:
-                y_min = st.sidebar.number_input("Y軸最小值", value=0.0)
-                y_max = st.sidebar.number_input("Y軸最大值", value=100.0)
+                col1, col2 = st.sidebar.columns(2)
+                with col1:
+                    y_min = st.number_input("Y軸最小值", value=0.0, key="yoko_single_y_min")
+                with col2:
+                    y_max = st.number_input("Y軸最大值", value=100.0, key="yoko_single_y_max")
                 y_range = (y_min, y_max)
             
             st.markdown("### 📊 YOKOGAWA 全通道溫度圖表")
@@ -1444,12 +1486,38 @@ class YokogawaRenderer:
         else:
             numeric_columns = self.log_data.numeric_columns
             if numeric_columns:
+                st.sidebar.markdown("#### 🎯 參數選擇")
                 left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=0)
                 right_y_axis_options = ['None'] + numeric_columns
                 right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=0)
                 
+                st.sidebar.markdown("#### 📏 Y軸範圍設定")
+                
+                # 左側Y軸範圍設定
+                left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="yoko_left_y")
+                left_y_range = None
+                if left_y_range_enabled:
+                    col1, col2 = st.sidebar.columns(2)
+                    with col1:
+                        left_y_min = st.number_input("左Y軸最小值", value=0.0, key="yoko_left_y_min")
+                    with col2:
+                        left_y_max = st.number_input("左Y軸最大值", value=100.0, key="yoko_left_y_max")
+                    left_y_range = (left_y_min, left_y_max)
+                
+                # 右側Y軸範圍設定（只有在選擇右軸變數時才顯示）
+                right_y_range = None
+                if right_y_axis and right_y_axis != 'None':
+                    right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="yoko_right_y")
+                    if right_y_range_enabled:
+                        col1, col2 = st.sidebar.columns(2)
+                        with col1:
+                            right_y_min = st.number_input("右Y軸最小值", value=0.0, key="yoko_right_y_min")
+                        with col2:
+                            right_y_max = st.number_input("右Y軸最大值", value=100.0, key="yoko_right_y_max")
+                        right_y_range = (right_y_min, right_y_max)
+                
                 st.markdown("### 📊 YOKOGAWA 自定義圖表")
-                chart = self.chart_gen.generate_flexible_chart(self.log_data, left_y_axis, right_y_axis, x_range)
+                chart = self.chart_gen.generate_flexible_chart(self.log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
                 if chart:
                     st.pyplot(chart)
         
@@ -1491,11 +1559,12 @@ def display_version_info():
         **當前版本：{VERSION}** | **發布日期：{VERSION_DATE}**
         
         ### 🆕 v10.2 Dual-Axis Range Control 更新內容：
-        - 📏 **雙軸Y範圍控制** - 可分別設定左右Y軸的顯示範圍
-        - 🔵 **左側Y軸範圍** - 獨立控制左側Y軸的最小值和最大值
-        - 🔴 **右側Y軸範圍** - 獨立控制右側Y軸的最小值和最大值（雙軸模式時）
-        - 🎯 **智能顯示控制** - 只有選擇右軸變數時才顯示右軸範圍設定
-        - 🔋 **功耗統計優化** - 保持 PTAT 4項核心功耗，GPUMon 3項關鍵功耗
+        - 📏 **全面雙軸Y範圍控制** - 所有Log類型都支援左右Y軸範圍調整
+        - 🎮 **GPUMon Y軸控制** - 獨立控制左右Y軸顯示範圍
+        - 🖥️ **PTAT Y軸控制** - 支援CPU監控數據的雙軸範圍調整
+        - 📊 **YOKOGAWA Y軸控制** - 溫度記錄儀數據的靈活範圍設定
+        - 🔵🔴 **視覺化標示** - 藍色圓點標示左軸，紅色圓點標示右軸
+        - 🔋 **功耗統計優化** - 保持核心功耗指標顯示
         
         ### 🏗️ 架構優勢：
         - 分層架構設計，高擴展性
@@ -1657,9 +1726,35 @@ def main():
                         time_min, time_max = combined_log_data.get_time_range()
                         x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
                         
+                        # Y軸範圍控制
+                        st.sidebar.markdown("#### 📏 Y軸範圍設定")
+                        
+                        # 左側Y軸範圍設定
+                        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="combined_left_y")
+                        left_y_range = None
+                        if left_y_range_enabled:
+                            col1, col2 = st.sidebar.columns(2)
+                            with col1:
+                                left_y_min = st.number_input("左Y軸最小值", value=0.0, key="combined_left_y_min")
+                            with col2:
+                                left_y_max = st.number_input("左Y軸最大值", value=100.0, key="combined_left_y_max")
+                            left_y_range = (left_y_min, left_y_max)
+                        
+                        # 右側Y軸範圍設定
+                        right_y_range = None
+                        if right_y_axis and right_y_axis != 'None':
+                            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="combined_right_y")
+                            if right_y_range_enabled:
+                                col1, col2 = st.sidebar.columns(2)
+                                with col1:
+                                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key="combined_right_y_min")
+                                with col2:
+                                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key="combined_right_y_max")
+                                right_y_range = (right_y_min, right_y_max)
+                        
                         st.markdown("### 📊 綜合數據圖表")
                         chart_gen = ChartGenerator()
-                        chart = chart_gen.generate_flexible_chart(combined_log_data, left_y_axis, right_y_axis, x_range)
+                        chart = chart_gen.generate_flexible_chart(combined_log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
                         if chart:
                             st.pyplot(chart)
                         
@@ -1688,9 +1783,35 @@ def main():
                     time_min, time_max = log_data.get_time_range()
                     x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
                     
+                    # Y軸範圍控制
+                    st.sidebar.markdown("#### 📏 Y軸範圍設定")
+                    
+                    # 左側Y軸範圍設定
+                    left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="single_left_y")
+                    left_y_range = None
+                    if left_y_range_enabled:
+                        col1, col2 = st.sidebar.columns(2)
+                        with col1:
+                            left_y_min = st.number_input("左Y軸最小值", value=0.0, key="single_left_y_min")
+                        with col2:
+                            left_y_max = st.number_input("左Y軸最大值", value=100.0, key="single_left_y_max")
+                        left_y_range = (left_y_min, left_y_max)
+                    
+                    # 右側Y軸範圍設定
+                    right_y_range = None
+                    if right_y_axis and right_y_axis != 'None':
+                        right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="single_right_y")
+                        if right_y_range_enabled:
+                            col1, col2 = st.sidebar.columns(2)
+                            with col1:
+                                right_y_min = st.number_input("右Y軸最小值", value=0.0, key="single_right_y_min")
+                            with col2:
+                                right_y_max = st.number_input("右Y軸最大值", value=100.0, key="single_right_y_max")
+                            right_y_range = (right_y_min, right_y_max)
+                    
                     st.markdown("### 📊 數據圖表")
                     chart_gen = ChartGenerator()
-                    chart = chart_gen.generate_flexible_chart(log_data, left_y_axis, right_y_axis, x_range)
+                    chart = chart_gen.generate_flexible_chart(log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
                     if chart:
                         st.pyplot(chart)
                     
@@ -1713,10 +1834,11 @@ def main():
         
         ### 🔍 v10.2 Dual-Axis Range Control 新功能
         
-        - **📏 雙軸Y範圍控制** - 可分別設定左右Y軸的顯示範圍
-        - **🎯 精確圖表控制** - 左右Y軸獨立調整，數據顯示更精確
+        - **📏 全面雙軸Y範圍控制** - 所有Log類型都支援左右Y軸範圍調整
+        - **🎯 精確圖表控制** - GPUMon、PTAT、YOKOGAWA全部支援Y軸獨立調整
         - **🔋 功耗統計優化** - PTAT 4項核心功耗，GPUMon 3項關鍵功耗
         - **🔵🔴 視覺化標示** - 藍色圓點標示左軸，紅色圓點標示右軸
+        - **🎨 智能UI控制** - 只有選擇右軸變數時才顯示右軸範圍設定
         - **訪問統計** - 持續追蹤平台使用情況和趨勢
         """)
 
