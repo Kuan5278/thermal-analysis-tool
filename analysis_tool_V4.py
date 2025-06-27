@@ -1,5 +1,5 @@
-# thermal_analysis_platform_v10.py
-# 溫度數據視覺化平台 - v10.2 雙軸Y範圍控制版
+# thermal_analysis_platform_v10.3.8_optimized_fixed.py
+# 溫度數據視覺化平台 - v10.3.8 多檔案獨立分析 + Summary整合版 (優化版 + 修復一鍵複製)
 
 import streamlit as st
 import pandas as pd
@@ -15,7 +15,7 @@ import json
 import os
 
 # 版本資訊
-VERSION = "v10.2 Dual-Axis Range Control"
+VERSION = "v10.3.8 Multi-File Analysis with Summary (Optimized + Fixed Copy with Borders)"
 VERSION_DATE = "2025年6月"
 
 # =============================================================================
@@ -241,11 +241,74 @@ class LogData:
         return self.df[(self.df.index >= x_min_td) & (self.df.index <= x_max_td)]
 
 # =============================================================================
-# 2. 解析器層 (Parser Layer)
+# 2. 解析器層 (Parser Layer) - 超簡潔版本
 # =============================================================================
+
+class ParseLogger:
+    """解析日誌管理器 - 統一管理所有解析輸出"""
+    
+    def __init__(self):
+        self.logs = []
+        self.debug_logs = []
+        self.success_logs = []
+        self.error_logs = []
+    
+    def info(self, message: str):
+        """記錄一般信息"""
+        self.logs.append(f"ℹ️ {message}")
+    
+    def debug(self, message: str):
+        """記錄調試信息"""
+        self.debug_logs.append(f"🔍 {message}")
+    
+    def success(self, message: str):
+        """記錄成功信息"""
+        self.success_logs.append(f"✅ {message}")
+    
+    def error(self, message: str):
+        """記錄錯誤信息"""
+        self.error_logs.append(f"❌ {message}")
+    
+    def warning(self, message: str):
+        """記錄警告信息"""
+        self.logs.append(f"⚠️ {message}")
+    
+    def show_summary(self, filename: str, log_type: str):
+        """顯示簡潔的解析摘要"""
+        if self.success_logs:
+            st.success(f"✅ {log_type} 解析成功！")
+        elif self.error_logs:
+            st.error(f"❌ {filename} 解析失敗")
+            return
+    
+    def show_detailed_logs(self, filename: str):
+        """在摺疊區域內顯示詳細日誌"""
+        with st.expander(f"🔍 詳細解析日誌 - {filename}", expanded=False):
+            if self.debug_logs:
+                st.markdown("**🔍 調試信息：**")
+                for log in self.debug_logs:
+                    st.code(log, language=None)
+            
+            if self.logs:
+                st.markdown("**📋 解析過程：**")
+                for log in self.logs:
+                    st.write(log)
+            
+            if self.success_logs:
+                st.markdown("**✅ 成功信息：**")
+                for log in self.success_logs:
+                    st.write(log)
+            
+            if self.error_logs:
+                st.markdown("**❌ 錯誤信息：**")
+                for log in self.error_logs:
+                    st.write(log)
 
 class LogParser(ABC):
     """解析器抽象基類"""
+    
+    def __init__(self):
+        self.logger = ParseLogger()
     
     @abstractmethod
     def can_parse(self, file_content: io.BytesIO, filename: str) -> bool:
@@ -264,7 +327,7 @@ class LogParser(ABC):
         pass
 
 class GPUMonParser(LogParser):
-    """GPUMon解析器"""
+    """GPUMon解析器 - 超簡潔版"""
     
     @property
     def log_type(self) -> str:
@@ -298,27 +361,30 @@ class GPUMonParser(LogParser):
             return False
     
     def parse(self, file_content: io.BytesIO, filename: str) -> Optional[LogData]:
-        """解析GPUMon檔案"""
+        """解析GPUMon檔案 - 靜默版本"""
         try:
             file_content.seek(0)
             content = file_content.read().decode('utf-8', errors='ignore')
             lines = content.split('\n')
             
-            st.write(f"🔍 GPUMon Debug: 檔案總行數 {len(lines)}")
+            self.logger.debug(f"檔案總行數: {len(lines)}")
             
             # 尋找標題行
             header_row_index = self._find_header_row(lines)
             if header_row_index is None:
+                self.logger.error("找不到有效的標題行")
                 return None
             
             # 解析數據
             df = self._parse_data_rows(lines, header_row_index)
             if df is None:
+                self.logger.error("數據行解析失敗")
                 return None
             
             # 處理時間
             df = self._process_time_data(df)
             if df is None:
+                self.logger.error("時間數據處理失敗")
                 return None
             
             # 數值轉換
@@ -342,36 +408,36 @@ class GPUMonParser(LogParser):
                 file_size_kb=file_size_kb
             )
             
-            st.write(f"🎉 GPUMon解析成功! 最終數據: {result_df.shape}")
+            self.logger.success(f"GPUMon解析成功！數據形狀: {result_df.shape}")
             return LogData(result_df, metadata)
             
         except Exception as e:
-            st.error(f"❌ GPUMon解析錯誤: {e}")
+            self.logger.error(f"GPUMon解析異常: {e}")
             return None
     
     def _find_header_row(self, lines: List[str]) -> Optional[int]:
-        """尋找標題行"""
+        """靜默尋找標題行"""
         for i, line in enumerate(lines):
             line_lower = line.lower()
             if ('iteration' in line_lower and 'date' in line_lower and 'timestamp' in line_lower):
-                st.write(f"✅ 找到標題行在第 {i+1} 行")
+                self.logger.debug(f"找到標題行在第 {i+1} 行")
                 return i
         
         # 備用搜尋
         for i, line in enumerate(lines):
             if line.count(',') > 10 and ('iteration' in line.lower() or 'gpu' in line.lower()):
-                st.write(f"📍 備用方式找到可能的標題行在第 {i+1} 行")
+                self.logger.debug(f"備用方式找到標題行在第 {i+1} 行")
                 return i
         
         return None
     
     def _parse_data_rows(self, lines: List[str], header_row_index: int) -> Optional[pd.DataFrame]:
-        """解析數據行"""
+        """靜默解析數據行"""
         header_line = lines[header_row_index]
-        st.write(f"📋 標題行內容: {header_line[:100]}...")
+        self.logger.debug(f"解析標題行，長度: {len(header_line)}")
         
         headers = [h.strip() for h in header_line.split(',')]
-        st.write(f"📊 解析到 {len(headers)} 個欄位")
+        self.logger.debug(f"解析到 {len(headers)} 個欄位")
         
         data_rows = []
         valid_data_count = 0
@@ -386,12 +452,10 @@ class GPUMonParser(LogParser):
                             any(cell and cell != 'N/A' for cell in row_data[:5])):
                             data_rows.append(row_data)
                             valid_data_count += 1
-                            if valid_data_count <= 3:
-                                st.write(f"✅ 有效數據行 {valid_data_count}: {row_data[:5]}...")
                 except Exception:
                     continue
         
-        st.write(f"📈 找到 {len(data_rows)} 行有效數據")
+        self.logger.debug(f"找到 {len(data_rows)} 行有效數據")
         
         if not data_rows:
             return None
@@ -407,45 +471,42 @@ class GPUMonParser(LogParser):
                 row.append('')
         
         df = pd.DataFrame(data_rows, columns=headers[:max_cols])
-        st.write(f"🎯 DataFrame創建成功: {df.shape}")
+        self.logger.debug(f"DataFrame創建成功: {df.shape}")
         
         return df
     
     def _process_time_data(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """處理時間數據"""
+        """靜默處理時間數據"""
         try:
             if 'Date' in df.columns and 'Timestamp' in df.columns:
-                st.write("🕐 處理時間格式: Date + Timestamp")
+                self.logger.debug("處理時間格式: Date + Timestamp")
                 
                 df['Timestamp_fixed'] = df['Timestamp'].str.replace(r':(\d{3})$', r'.\1', regex=True)
-                st.write(f"🔧 時間格式修正: {df['Timestamp'].iloc[0]} -> {df['Timestamp_fixed'].iloc[0]}")
-                
                 df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Timestamp_fixed'], errors='coerce')
-                st.write(f"📅 合併後時間: {df['DateTime'].iloc[0]}")
                 
             else:
                 df['DateTime'] = pd.to_datetime('2025-01-01') + pd.to_timedelta(range(len(df)), unit='s')
             
             valid_datetime_count = df['DateTime'].notna().sum()
-            st.write(f"📊 成功解析的時間點: {valid_datetime_count}/{len(df)}")
+            self.logger.debug(f"成功解析的時間點: {valid_datetime_count}/{len(df)}")
             
             if valid_datetime_count > 0:
                 df['time_index'] = df['DateTime'] - df['DateTime'].iloc[0]
                 valid_mask = df['time_index'].notna()
                 df = df[valid_mask].copy()
-                st.write(f"⏰ 時間解析成功，最終有效數據: {len(df)} 行")
+                self.logger.debug(f"時間解析成功，最終數據: {len(df)} 行")
             else:
                 df['time_index'] = pd.to_timedelta(range(len(df)), unit='s')
             
             return df
             
         except Exception as e:
-            st.write(f"⚠️ 時間解析異常: {e}")
+            self.logger.warning(f"時間解析異常，使用默認時間: {e}")
             df['time_index'] = pd.to_timedelta(range(len(df)), unit='s')
             return df
     
     def _convert_numeric_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        """轉換數值型欄位"""
+        """靜默轉換數值型欄位"""
         numeric_count = 0
         for col in df.columns:
             if col not in ['Date', 'Timestamp', 'DateTime', 'time_index', 'Iteration']:
@@ -457,11 +518,11 @@ class GPUMonParser(LogParser):
                 except:
                     pass
         
-        st.write(f"🔢 轉換了 {numeric_count} 個數值欄位")
+        self.logger.debug(f"轉換了 {numeric_count} 個數值欄位")
         return df
 
 class PTATParser(LogParser):
-    """PTAT解析器"""
+    """PTAT解析器 - 超簡潔版"""
     
     @property
     def log_type(self) -> str:
@@ -483,6 +544,7 @@ class PTATParser(LogParser):
             df.columns = df.columns.str.strip()
             
             if 'Time' not in df.columns:
+                self.logger.error("找不到時間欄位")
                 return None
             
             time_series = df['Time'].astype(str).str.strip()
@@ -493,6 +555,7 @@ class PTATParser(LogParser):
             df = df[valid_times_mask].copy()
             
             if df.empty:
+                self.logger.error("沒有有效的時間數據")
                 return None
             
             valid_datetimes = datetime_series[valid_times_mask]
@@ -515,13 +578,15 @@ class PTATParser(LogParser):
                 file_size_kb=file_size_kb
             )
             
+            self.logger.success(f"PTAT解析成功！數據形狀: {result_df.shape}")
             return LogData(result_df, metadata)
             
         except Exception as e:
+            self.logger.error(f"PTAT解析失敗: {e}")
             return None
 
 class YokogawaParser(LogParser):
-    """YOKOGAWA解析器 - 完整版重命名邏輯"""
+    """YOKOGAWA解析器 - v10.3.8 超簡潔版本"""
     
     @property
     def log_type(self) -> str:
@@ -532,24 +597,22 @@ class YokogawaParser(LogParser):
         return True
     
     def parse(self, file_content: io.BytesIO, filename: str) -> Optional[LogData]:
-        st.write(f"🚀 YOKOGAWA解析器啟動 - 檔案: {filename}")
+        self.logger.info(f"啟動YOKOGAWA解析器 (v10.3.8超簡潔版) - {filename}")
         
         try:
             is_excel = '.xlsx' in filename.lower() or '.xls' in filename.lower()
             read_func = pd.read_excel if is_excel else pd.read_csv
             
-            st.write(f"🔍 檔案類型: {'Excel' if is_excel else 'CSV'}")
+            self.logger.debug(f"檔案類型: {'Excel' if is_excel else 'CSV'}")
             
-            if is_excel:
-                possible_headers = [29, 28, 30, 27]
-            else:
-                possible_headers = [0, 1, 2]
-                
+            # 動態搜索可能的 header 行
+            possible_headers = self._find_possible_headers(file_content, is_excel, read_func)
+            
             df = None
             found_time_col = None
             successful_header = None
             
-            st.write(f"📋 嘗試header行: {possible_headers}")
+            self.logger.debug(f"候選header行: {possible_headers}")
             
             for header_row in possible_headers:
                 try:
@@ -557,8 +620,7 @@ class YokogawaParser(LogParser):
                     df = read_func(file_content, header=header_row, thousands=',')
                     df.columns = df.columns.str.strip()
                     
-                    st.write(f"  嘗試header_row={header_row}, 得到形狀: {df.shape}")
-                    st.write(f"  欄位: {list(df.columns)[:8]}...")
+                    self.logger.debug(f"嘗試header_row={header_row}, 形狀: {df.shape}")
                     
                     time_candidates = ['Time', 'TIME', 'time', 'Date', 'DATE', 'date', 
                                      'DateTime', 'DATETIME', 'datetime', '時間', '日期時間',
@@ -568,190 +630,346 @@ class YokogawaParser(LogParser):
                         if candidate in df.columns:
                             found_time_col = candidate
                             successful_header = header_row
-                            st.write(f"  ✅ 找到時間欄位: {candidate}")
+                            self.logger.debug(f"找到時間欄位: {candidate}")
                             break
                     
                     if found_time_col:
                         break
                         
                 except Exception as e:
-                    st.write(f"  ❌ header_row={header_row} 失敗: {e}")
+                    self.logger.debug(f"header_row={header_row} 失敗: {e}")
                     continue
             
             if df is None or found_time_col is None:
-                error_msg = f"❌ 無法找到時間欄位。最後嘗試的欄位: {list(df.columns) if df is not None else '無'}"
-                st.write(error_msg)
+                self.logger.error("無法找到時間欄位")
                 return None
             
             time_column = found_time_col
-            st.write(f"✅ 成功解析，使用header_row={successful_header}, 時間欄位='{time_column}'")
-            st.write(f"📊 DataFrame最終形狀: {df.shape}")
+            self.logger.success(f"成功解析，header_row={successful_header}, 時間欄位='{time_column}'")
+            self.logger.debug(f"DataFrame形狀: {df.shape}")
             
-            # ★★★ 重命名邏輯 - 在任何其他處理之前執行 ★★★
+            # 動態重命名邏輯 - 靜默執行
             if is_excel:
-                st.write("=" * 50)
-                st.write("🏷️ 開始YOKOGAWA欄位重命名邏輯")
-                st.write("=" * 50)
-                
                 try:
-                    # 讀取第28行和第29行
-                    ch_row_idx = 27  # 第28行
-                    tag_row_idx = 28  # 第29行
+                    ch_row_idx, tag_row_idx = self._find_ch_tag_rows(file_content, successful_header)
                     
-                    st.write(f"📖 準備讀取第{ch_row_idx+1}行(CH行)和第{tag_row_idx+1}行(Tag行)")
-                    
-                    # 讀取CH行
-                    file_content.seek(0)
-                    ch_row = pd.read_excel(file_content, header=None, skiprows=ch_row_idx, nrows=1).iloc[0]
-                    st.write(f"✅ 第28行讀取成功，長度: {len(ch_row)}")
-                    st.write(f"📋 第28行前10個: {[str(ch_row.iloc[i]) if i < len(ch_row) else 'N/A' for i in range(10)]}")
-                    
-                    # 讀取Tag行
-                    file_content.seek(0)
-                    tag_row = pd.read_excel(file_content, header=None, skiprows=tag_row_idx, nrows=1).iloc[0]
-                    st.write(f"✅ 第29行讀取成功，長度: {len(tag_row)}")
-                    st.write(f"📋 第29行前10個: {[str(tag_row.iloc[i]) if i < len(tag_row) else 'N/A' for i in range(10)]}")
-                    
-                    # 執行重命名
-                    st.write("🔄 開始重命名處理...")
-                    original_columns = list(df.columns)
-                    st.write(f"📋 原始欄位: {original_columns[:10]}...")
-                    
-                    new_column_names = {}
-                    rename_log = []
-                    
-                    for i, original_col in enumerate(df.columns):
-                        # 獲取CH和Tag名稱
-                        ch_name = ""
-                        tag_name = ""
+                    if ch_row_idx is not None and tag_row_idx is not None:
+                        self.logger.debug(f"找到CH行(第{ch_row_idx+1}行)和Tag行(第{tag_row_idx+1}行)")
                         
-                        if i < len(ch_row):
-                            ch_val = ch_row.iloc[i]
-                            if pd.notna(ch_val) and str(ch_val).strip() not in ['nan', 'NaN', '', ' ', 'None']:
-                                ch_name = str(ch_val).strip()
+                        # 讀取CH行和Tag行
+                        file_content.seek(0)
+                        ch_row = pd.read_excel(file_content, header=None, skiprows=ch_row_idx, nrows=1).iloc[0]
+                        file_content.seek(0)
+                        tag_row = pd.read_excel(file_content, header=None, skiprows=tag_row_idx, nrows=1).iloc[0]
                         
-                        if i < len(tag_row):
-                            tag_val = tag_row.iloc[i]
-                            if pd.notna(tag_val) and str(tag_val).strip() not in ['nan', 'NaN', 'Tag', '', ' ', 'None']:
-                                tag_name = str(tag_val).strip()
+                        # 執行重命名
+                        df = self._perform_renaming(df, ch_row, tag_row)
+                    else:
+                        self.logger.info("未找到CH/Tag行，使用原始欄位名稱")
                         
-                        # 決定最終名稱
-                        if tag_name:
-                            final_name = tag_name
-                            rename_log.append(f"欄位{i+1}: '{original_col}' → Tag'{tag_name}'")
-                        elif ch_name and ch_name.startswith('CH'):
-                            final_name = ch_name
-                            rename_log.append(f"欄位{i+1}: '{original_col}' → CH'{ch_name}'")
-                        else:
-                            final_name = original_col
-                            rename_log.append(f"欄位{i+1}: '{original_col}' → 保持原名")
-                        
-                        new_column_names[original_col] = final_name
-                    
-                    # 顯示重命名計劃
-                    st.write("📝 重命名計劃:")
-                    for log_entry in rename_log[:15]:  # 顯示前15個
-                        st.write(f"  {log_entry}")
-                    
-                    # 執行重命名
-                    df.rename(columns=new_column_names, inplace=True)
-                    st.write(f"✅ 重命名執行完成！")
-                    
-                    # 驗證重命名結果
-                    renamed_columns = list(df.columns)
-                    st.write(f"📋 重命名後欄位: {renamed_columns[:10]}...")
-                    
-                    # 統計重命名效果
-                    actual_changes = [(old, new) for old, new in new_column_names.items() if old != new]
-                    st.write(f"📊 實際重命名了 {len(actual_changes)} 個欄位:")
-                    for old, new in actual_changes[:8]:
-                        st.write(f"  '{old}' → '{new}'")
-                    
                 except Exception as e:
-                    st.write(f"❌ 重命名過程異常: {e}")
-                    import traceback
-                    st.write("詳細錯誤堆疊:")
-                    st.code(traceback.format_exc())
-                    st.write("⚠️ 將繼續使用原始欄位名稱")
+                    self.logger.warning(f"重命名過程異常: {e}")
             
-            # 繼續處理時間和其他邏輯...
-            st.write("⏰ 開始處理時間數據...")
-            time_series = df[time_column].astype(str).str.strip()
+            # 處理時間和完成解析
+            result = self._process_time_and_finalize(df, time_column, file_content, filename)
             
-            try:
-                df['time_index'] = pd.to_timedelta(time_series + ':00').fillna(pd.to_timedelta('00:00:00'))
-                if df['time_index'].isna().all():
-                    raise ValueError("Timedelta 轉換失敗")
-            except:
-                try:
-                    datetime_series = pd.to_datetime(time_series, format='%H:%M:%S', errors='coerce')
-                    if datetime_series.notna().sum() == 0:
-                        datetime_series = pd.to_datetime(time_series, errors='coerce')
-                    df['time_index'] = datetime_series - datetime_series.iloc[0]
-                except Exception as e:
-                    st.write(f"❌ 時間解析失敗: {e}")
-                    return None
-            
-            valid_times_mask = df['time_index'].notna()
-            if valid_times_mask.sum() == 0:
-                st.write("❌ 沒有有效的時間數據")
-                return None
-            
-            df = df[valid_times_mask].copy()
-            
-            if len(df) > 0:
-                start_time = df['time_index'].iloc[0]
-                df['time_index'] = df['time_index'] - start_time
-            
-            # 數值轉換
-            numeric_columns = df.select_dtypes(include=['number']).columns
-            for col in numeric_columns:
-                if col != 'time_index':
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            # 添加前綴
-            st.write("🏷️ 添加YOKO前綴...")
-            before_prefix = list(df.columns)[:5]
-            df = df.add_prefix('YOKO: ')
-            df.rename(columns={'YOKO: time_index': 'time_index'}, inplace=True)
-            after_prefix = list(df.columns)[:5]
-            
-            st.write(f"前綴前: {before_prefix}")
-            st.write(f"前綴後: {after_prefix}")
-            
-            result_df = df.set_index('time_index')
-            
-            # 創建元數據
-            file_size_kb = len(file_content.getvalue()) / 1024
-            time_range = f"{result_df.index.min()} 到 {result_df.index.max()}"
-            
-            metadata = LogMetadata(
-                filename=filename,
-                log_type=self.log_type,
-                rows=result_df.shape[0],
-                columns=result_df.shape[1],
-                time_range=time_range,
-                file_size_kb=file_size_kb
-            )
-            
-            st.write(f"🎉 YOKOGAWA解析完成！最終形狀: {result_df.shape}")
-            st.write(f"🏷️ 最終欄位樣本: {list(result_df.columns)[:8]}...")
-            
-            return LogData(result_df, metadata)
+            return result
             
         except Exception as e:
-            st.write(f"❌ YOKOGAWA解析器整體異常: {e}")
-            import traceback
-            st.write("完整錯誤堆疊:")
-            st.code(traceback.format_exc())
+            self.logger.error(f"YOKOGAWA解析器異常: {e}")
             return None
+    
+    def _find_possible_headers(self, file_content: io.BytesIO, is_excel: bool, read_func) -> List[int]:
+        """靜默搜索可能的header行"""
+        if not is_excel:
+            return [0, 1, 2]  # CSV 通常在前幾行
+        
+        possible_headers = []
+        
+        self.logger.debug("開始搜索header行...")
+        
+        # 第一階段：關鍵字搜索
+        time_keywords = ['time', 'date', 'timestamp', '時間', '日期']
+        
+        for pos in range(0, 50):  # 搜索前50行
+            try:
+                file_content.seek(0)
+                test_df = read_func(file_content, header=pos, nrows=1)
+                columns_str = ' '.join(str(col).lower() for col in test_df.columns if pd.notna(col))
+                
+                # 檢查是否包含時間相關關鍵詞
+                if any(keyword in columns_str for keyword in time_keywords):
+                    possible_headers.append(pos)
+                    found_keywords = [kw for kw in time_keywords if kw in columns_str]
+                    self.logger.debug(f"第{pos+1}行包含時間關鍵詞: {found_keywords}")
+                    
+            except Exception:
+                continue
+        
+        # 第二階段：結構搜索
+        if not possible_headers:
+            self.logger.debug("關鍵字搜索失敗，使用結構搜索")
+            for pos in range(0, 50):
+                try:
+                    file_content.seek(0)
+                    test_df = read_func(file_content, header=pos, nrows=1)
+                    if test_df.shape[1] >= 5:  # 至少要有5個欄位
+                        possible_headers.append(pos)
+                        if len(possible_headers) >= 10:  # 最多找10個候選
+                            break
+                except Exception:
+                    continue
+        
+        # 第三階段：預設值
+        if not possible_headers:
+            possible_headers = [29, 28, 30, 27, 26, 31, 32] if is_excel else [0, 1, 2]
+            self.logger.debug("使用預設搜索範圍")
+        
+        self.logger.debug(f"找到 {len(possible_headers)} 個候選header行")
+        return possible_headers
+    
+    def _find_ch_tag_rows(self, file_content: io.BytesIO, header_row: int) -> Tuple[Optional[int], Optional[int]]:
+        """靜默尋找CH行和Tag行"""
+        ch_row_idx = None
+        tag_row_idx = None
+        
+        self.logger.debug(f"在header行({header_row+1})附近搜索CH和Tag行")
+        
+        # 搜索範圍
+        search_range = range(max(0, header_row - 8), header_row + 1)
+        
+        # 分析所有候選行的內容
+        row_analysis = []
+        for idx in search_range:
+            try:
+                file_content.seek(0)
+                test_row = pd.read_excel(file_content, header=None, skiprows=idx, nrows=1).iloc[0]
+                
+                # 分析這一行的內容
+                ch_count = 0
+                meaningful_tags = []
+                
+                for val in test_row:
+                    if pd.isna(val) or str(val).strip() == '':
+                        continue
+                    else:
+                        val_str = str(val).strip()
+                        
+                        if val_str.upper().startswith('CH'):
+                            ch_count += 1
+                        elif self._is_meaningful_tag(val):
+                            meaningful_tags.append(val_str)
+                
+                analysis = {
+                    'row_idx': idx,
+                    'ch_count': ch_count,
+                    'meaningful_tags': meaningful_tags,
+                    'meaningful_count': len(meaningful_tags)
+                }
+                row_analysis.append(analysis)
+                
+                self.logger.debug(f"第{idx+1}行: CH={ch_count}, 用戶標籤={len(meaningful_tags)}")
+                
+            except Exception as e:
+                self.logger.debug(f"第{idx+1}行分析失敗: {e}")
+                continue
+        
+        # 尋找CH行
+        for analysis in row_analysis:
+            if analysis['ch_count'] >= 3:
+                ch_row_idx = analysis['row_idx']
+                self.logger.debug(f"找到CH行在第{ch_row_idx+1}行")
+                break
+        
+        # 尋找Tag行
+        if ch_row_idx is not None:
+            tag_candidates = [a for a in row_analysis if a['row_idx'] != ch_row_idx and a['row_idx'] < header_row]
+            
+            best_tag_row = None
+            max_tags = 0
+            
+            for candidate in tag_candidates:
+                if candidate['meaningful_count'] > max_tags:
+                    max_tags = candidate['meaningful_count']
+                    best_tag_row = candidate
+            
+            if best_tag_row:
+                tag_row_idx = best_tag_row['row_idx']
+                self.logger.debug(f"找到Tag行在第{tag_row_idx+1}行(含{max_tags}個用戶標籤)")
+        
+        return ch_row_idx, tag_row_idx
+    
+    def _is_meaningful_tag(self, tag_val) -> bool:
+        """判斷Tag值是否有意義（用戶自定義代號）"""
+        if pd.isna(tag_val):
+            return False
+            
+        tag_str = str(tag_val).strip()
+        
+        # 排除空值
+        if tag_str in ['', 'nan', 'NaN', 'None']:
+            return False
+            
+        # 排除單獨的 "Tag"
+        if tag_str.upper() == 'TAG':
+            return False
+            
+        # 排除系統標題詞
+        system_titles = ['CHANNEL', 'CH', 'POINT', 'TEMP', 'SENSOR']
+        if tag_str.upper() in system_titles:
+            return False
+            
+        # 字母+數字組合，很可能是用戶標籤（如 U5, U19, L8）
+        if len(tag_str) <= 4 and any(c.isalpha() for c in tag_str) and any(c.isdigit() for c in tag_str):
+            return True
+            
+        # 包含下劃線，很可能是用戶標籤（如 CPU_Tc）
+        if '_' in tag_str:
+            return True
+            
+        # 排除看起來像測量數據的數字
+        try:
+            float_val = float(tag_str)
+            if (0 <= float_val <= 200 and '.' in tag_str and len(tag_str) > 4):
+                return False
+            elif len(tag_str) <= 3:
+                return True
+        except ValueError:
+            pass
+            
+        # 其他情況，長度大於1就認為是有意義的
+        if len(tag_str) >= 2:
+            return True
+            
+        return False
+    
+    def _perform_renaming(self, df: pd.DataFrame, ch_row: pd.Series, tag_row: pd.Series) -> pd.DataFrame:
+        """靜默執行重命名邏輯"""
+        self.logger.debug("開始智能重命名處理")
+        
+        # 保護關鍵欄位
+        protected_columns = {
+            'Date', 'TIME', 'Time', 'time', 'DATE', 'date',
+            'DateTime', 'DATETIME', 'datetime', 
+            'Timestamp', 'TIMESTAMP', 'timestamp',
+            'sec', 'SEC', 'RT', 'rt', '時間', '日期時間'
+        }
+        
+        new_column_names = {}
+        tag_used = 0
+        ch_used = 0
+        protected_count = 0
+        original_kept = 0
+        
+        for i, original_col in enumerate(df.columns):
+            # 保護關鍵欄位
+            if original_col in protected_columns:
+                final_name = original_col
+                protected_count += 1
+                new_column_names[original_col] = final_name
+                continue
+            
+            # 獲取Tag值
+            tag_name = ""
+            if i < len(tag_row):
+                tag_val = tag_row.iloc[i]
+                if self._is_meaningful_tag(tag_val):
+                    tag_name = str(tag_val).strip()
+            
+            # 獲取CH值
+            ch_name = ""
+            if i < len(ch_row):
+                ch_val = ch_row.iloc[i]
+                if pd.notna(ch_val) and str(ch_val).strip().upper().startswith('CH'):
+                    ch_name = str(ch_val).strip()
+            
+            # 決定最終名稱
+            if tag_name:
+                final_name = tag_name
+                tag_used += 1
+            elif ch_name:
+                final_name = ch_name
+                ch_used += 1
+            else:
+                final_name = original_col
+                original_kept += 1
+            
+            new_column_names[original_col] = final_name
+        
+        # 執行重命名
+        df.rename(columns=new_column_names, inplace=True)
+        
+        self.logger.debug(f"重命名完成: Tag={tag_used}, CH={ch_used}, 保護={protected_count}, 原名={original_kept}")
+        
+        return df
+    
+    def _process_time_and_finalize(self, df: pd.DataFrame, time_column: str, file_content: io.BytesIO, filename: str) -> Optional[LogData]:
+        """處理時間並完成解析"""
+        self.logger.debug("處理時間數據")
+        time_series = df[time_column].astype(str).str.strip()
+        
+        try:
+            df['time_index'] = pd.to_timedelta(time_series + ':00').fillna(pd.to_timedelta('00:00:00'))
+            if df['time_index'].isna().all():
+                raise ValueError("Timedelta 轉換失敗")
+            self.logger.debug("時間解析成功 (Timedelta格式)")
+        except:
+            try:
+                datetime_series = pd.to_datetime(time_series, format='%H:%M:%S', errors='coerce')
+                if datetime_series.notna().sum() == 0:
+                    datetime_series = pd.to_datetime(time_series, errors='coerce')
+                df['time_index'] = datetime_series - datetime_series.iloc[0]
+                self.logger.debug("時間解析成功 (DateTime格式)")
+            except Exception as e:
+                self.logger.error(f"時間解析失敗: {e}")
+                return None
+        
+        valid_times_mask = df['time_index'].notna()
+        if valid_times_mask.sum() == 0:
+            self.logger.error("沒有有效的時間數據")
+            return None
+        
+        df = df[valid_times_mask].copy()
+        
+        if len(df) > 0:
+            start_time = df['time_index'].iloc[0]
+            df['time_index'] = df['time_index'] - start_time
+        
+        # 數值轉換
+        numeric_columns = df.select_dtypes(include=['number']).columns
+        numeric_converted = len(numeric_columns)
+        
+        self.logger.debug(f"數值轉換完成，處理了 {numeric_converted} 個欄位")
+        
+        # 添加前綴
+        df = df.add_prefix('YOKO: ')
+        df.rename(columns={'YOKO: time_index': 'time_index'}, inplace=True)
+        
+        result_df = df.set_index('time_index')
+        
+        # 創建元數據
+        file_size_kb = len(file_content.getvalue()) / 1024
+        time_range = f"{result_df.index.min()} 到 {result_df.index.max()}"
+        
+        metadata = LogMetadata(
+            filename=filename,
+            log_type=self.log_type,
+            rows=result_df.shape[0],
+            columns=result_df.shape[1],
+            time_range=time_range,
+            file_size_kb=file_size_kb
+        )
+        
+        self.logger.success(f"YOKOGAWA v10.3.8 解析完成！數據形狀: {result_df.shape}")
+        
+        return LogData(result_df, metadata)
 
 # =============================================================================
-# 3. 解析器註冊系統 (Parser Registry)
+# 3. 解析器註冊系統 (Parser Registry) - 超簡潔版
 # =============================================================================
 
 class ParserRegistry:
-    """解析器註冊系統"""
+    """解析器註冊系統 - 超簡潔版"""
     
     def __init__(self):
         self.parsers: List[LogParser] = []
@@ -761,30 +979,47 @@ class ParserRegistry:
         self.parsers.append(parser)
     
     def parse_file(self, uploaded_file) -> Optional[LogData]:
-        """解析檔案，自動選擇合適的解析器"""
+        """解析檔案，自動選擇合適的解析器 - 靜默版本"""
         filename = uploaded_file.name
         file_content = io.BytesIO(uploaded_file.getvalue())
         is_excel = '.xlsx' in filename.lower() or '.xls' in filename.lower()
         
-        st.write(f"🔍 檔案分析: {filename} (Excel: {is_excel})")
+        # 創建一個臨時的日誌收集器來顯示解析摘要
+        parsing_summary = {"attempted": [], "successful": None, "failed": []}
         
         for parser in self.parsers:
             try:
                 file_content.seek(0)
+                parsing_summary["attempted"].append(parser.log_type)
+                
                 if parser.can_parse(file_content, filename):
-                    st.write(f"🎯 使用 {parser.log_type} 解析器")
                     file_content.seek(0)
                     result = parser.parse(file_content, filename)
                     if result is not None:
+                        parsing_summary["successful"] = parser.log_type
+                        # 顯示解析摘要
+                        parser.logger.show_summary(filename, parser.log_type)
+                        # 顯示詳細日誌（摺疊）
+                        parser.logger.show_detailed_logs(filename)
                         return result
+                    else:
+                        parsing_summary["failed"].append(parser.log_type)
             except Exception as e:
-                st.write(f"⚠️ {parser.log_type} 解析器失敗: {e}")
+                parsing_summary["failed"].append(f"{parser.log_type} (異常: {str(e)[:50]})")
                 continue
+        
+        # 如果所有解析器都失敗
+        st.error(f"❌ 無法解析檔案 {filename}")
+        with st.expander(f"🔍 解析失敗詳情 - {filename}", expanded=False):
+            st.write(f"**嘗試的解析器:** {', '.join(parsing_summary['attempted'])}")
+            if parsing_summary["failed"]:
+                st.write(f"**失敗的解析器:** {', '.join(parsing_summary['failed'])}")
+            st.write("**建議:** 確認檔案格式是否正確，或聯繫技術支援")
         
         return None
 
 # =============================================================================
-# 4. 統計計算層 (Statistics Layer) - 功耗項目優化版本
+# 4. 統計計算層 (Statistics Layer)
 # =============================================================================
 
 class StatisticsCalculator:
@@ -813,19 +1048,16 @@ class StatisticsCalculator:
         
         temp_df = pd.DataFrame(temp_stats) if temp_stats else None
         
-        # GPU功耗統計 - 只顯示指定的三個項目
+        # GPU功耗統計
         power_stats = []
-        # 指定的功耗項目：NVVDD power, FBVDD power, TGP (W)
         target_power_items = ['NVVDD', 'FBVDD', 'TGP']
         
         for target_item in target_power_items:
-            # 尋找包含目標項目的欄位
             matching_cols = [col for col in df.columns if target_item in col and ('Power' in col or 'TGP' in col)]
             
             for col in matching_cols:
                 power_data = pd.to_numeric(df[col], errors='coerce').dropna()
                 if len(power_data) > 0:
-                    # 清理顯示名稱
                     display_name = col.replace('GPU: ', '')
                     if 'NVVDD' in col:
                         display_name = 'NVVDD Power'
@@ -840,7 +1072,7 @@ class StatisticsCalculator:
                         'Min (W)': f"{power_data.min():.2f}",
                         'Avg (W)': f"{power_data.mean():.2f}"
                     })
-                    break  # 找到一個就停止，避免重複
+                    break
         
         power_df = pd.DataFrame(power_stats) if power_stats else None
         
@@ -946,9 +1178,8 @@ class StatisticsCalculator:
         
         freq_df = pd.DataFrame(freq_stats) if freq_stats else None
         
-        # Package Power 統計 - 只顯示指定的四個項目
+        # Package Power 統計
         power_stats = []
-        # 指定的功耗項目：IA power, GT power, Rest of package power, package power
         target_power_items = [
             ('IA', 'IA Power'),
             ('GT', 'GT Power'), 
@@ -957,13 +1188,11 @@ class StatisticsCalculator:
         ]
         
         for search_term, display_name in target_power_items:
-            # 尋找包含目標項目的欄位
             matching_cols = []
             for col in df.columns:
                 col_lower = col.lower()
                 search_lower = search_term.lower()
                 
-                # 更精確的匹配邏輯
                 if search_term == 'IA':
                     if 'ia' in col_lower and 'power' in col_lower and 'via' not in col_lower:
                         matching_cols.append(col)
@@ -977,7 +1206,6 @@ class StatisticsCalculator:
                     if 'package' in col_lower and 'power' in col_lower and 'rest' not in col_lower:
                         matching_cols.append(col)
             
-            # 如果找到匹配的欄位，取第一個
             if matching_cols:
                 col = matching_cols[0]
                 power_data = pd.to_numeric(df[col], errors='coerce').dropna()
@@ -1026,7 +1254,6 @@ class StatisticsCalculator:
                 t_max = y_data.max()
                 t_avg = y_data.mean()
                 
-                # 清理顯示名稱 - 移除前綴並顯示更友好的名稱
                 display_name = col
                 if display_name.startswith('YOKO: '):
                     display_name = display_name.replace('YOKO: ', '')
@@ -1035,7 +1262,6 @@ class StatisticsCalculator:
                 elif display_name.startswith('GPU: '):
                     display_name = display_name.replace('GPU: ', '')
                 
-                # 排除明顯的非溫度欄位
                 if display_name.lower() in ['sec', 'time', 'rt', 'date']:
                     continue
                 
@@ -1048,7 +1274,136 @@ class StatisticsCalculator:
         return pd.DataFrame(stats_data)
 
 # =============================================================================
-# 5. 圖表生成層 (Chart Generation Layer)
+# 5. Summary溫度整合表格生成器 (Temperature Summary Generator) - 優化版
+# =============================================================================
+
+class TemperatureSummaryGenerator:
+    """溫度整合摘要生成器 - v10.3.8優化版"""
+    
+    @staticmethod
+    def generate_summary_table(log_data_list: List[LogData]) -> pd.DataFrame:
+        """生成溫度摘要表格，按照用戶提供的格式"""
+        summary_data = []
+        ch_number = 1
+        
+        for log_data in log_data_list:
+            df = log_data.df
+            log_type = log_data.metadata.log_type
+            filename = log_data.metadata.filename
+            
+            # 獲取所有數值型欄位
+            numeric_cols = df.select_dtypes(include=['number']).columns
+            temp_cols = [col for col in numeric_cols if col not in ['Date', 'sec', 'RT', 'TIME']]
+            
+            # 針對PTAT log特殊處理 - 只保留MSR Package Temperature
+            if "PTAT" in log_type:
+                temp_cols = [col for col in temp_cols if 'msr' in col.lower() and 'package' in col.lower() and 'temperature' in col.lower()]
+            
+            for col in temp_cols:
+                temp_data = pd.to_numeric(df[col], errors='coerce').dropna()
+                if len(temp_data) > 0:
+                    max_temp = temp_data.max()
+                    
+                    # 清理欄位名稱
+                    clean_col_name = col
+                    if clean_col_name.startswith('YOKO: '):
+                        clean_col_name = clean_col_name.replace('YOKO: ', '')
+                    elif clean_col_name.startswith('PTAT: '):
+                        clean_col_name = clean_col_name.replace('PTAT: ', '')
+                    elif clean_col_name.startswith('GPU: '):
+                        clean_col_name = clean_col_name.replace('GPU: ', '')
+                    
+                    # 跳過非溫度相關欄位
+                    if clean_col_name.lower() in ['sec', 'time', 'rt', 'date', 'iteration']:
+                        continue
+                    
+                    # 根據不同log類型設定描述
+                    description = ""
+                    if "GPU" in log_type:
+                        if "Temperature" in clean_col_name:
+                            description = "GPU Temperature"
+                    elif "PTAT" in log_type:
+                        if "MSR" in clean_col_name and "Package" in clean_col_name:
+                            description = "CPU MSR Package Temperature"
+                    else:  # YOKOGAWA或其他
+                        # 根據欄位名稱推測類型
+                        if any(keyword in clean_col_name.upper() for keyword in ['CPU', 'PROCESSOR']):
+                            description = "CPU"
+                        elif any(keyword in clean_col_name.upper() for keyword in ['SSD', 'STORAGE']):
+                            description = "SSD"
+                        elif any(keyword in clean_col_name.upper() for keyword in ['DDR', 'MEMORY', 'RAM']):
+                            description = "Memory"
+                        elif any(keyword in clean_col_name.upper() for keyword in ['WIFI', 'WIRELESS']):
+                            description = "WIFI"
+                        else:
+                            description = ""
+                    
+                    # 格式化溫度值
+                    if max_temp > 200:  # 可能是毫度或其他單位
+                        formatted_temp = f"{max_temp/1000:.1f}" if max_temp > 1000 else f"{max_temp:.1f}"
+                    else:
+                        formatted_temp = f"{max_temp:.1f}"
+                    
+                    # 所有spec相關欄位都留空
+                    summary_data.append({
+                        'Ch.': ch_number,
+                        'Location': clean_col_name,
+                        'Description': description,
+                        'Spec location': "",  # 留空給用戶填寫
+                        'spec': "",  # 留空給用戶填寫
+                        'Ref Tc spec': "",  # 留空給用戶填寫
+                        'Result (Case Temp)': formatted_temp,
+                        'Source File': filename,
+                        'Log Type': log_type
+                    })
+                    
+                    ch_number += 1
+        
+        return pd.DataFrame(summary_data)
+    
+    @staticmethod
+    def format_summary_table_for_display(summary_df: pd.DataFrame) -> pd.DataFrame:
+        """格式化表格以符合顯示要求"""
+        if summary_df.empty:
+            return pd.DataFrame()
+        
+        # 創建顯示用的DataFrame，不包含Source File和Log Type
+        display_df = summary_df[['Ch.', 'Location', 'Description', 'Spec location', 'spec', 'Ref Tc spec', 'Result (Case Temp)']].copy()
+        
+        return display_df
+    
+    @staticmethod
+    def get_summary_statistics(summary_df: pd.DataFrame) -> dict:
+        """獲取摘要統計信息"""
+        if summary_df.empty:
+            return {}
+        
+        try:
+            # 轉換溫度為數值
+            temps = pd.to_numeric(summary_df['Result (Case Temp)'], errors='coerce').dropna()
+            
+            stats = {
+                'total_channels': len(summary_df),
+                'max_temp': temps.max() if len(temps) > 0 else 0,
+                'min_temp': temps.min() if len(temps) > 0 else 0,
+                'avg_temp': temps.mean() if len(temps) > 0 else 0,
+                'files_analyzed': summary_df['Source File'].nunique() if 'Source File' in summary_df.columns else 0,
+                'log_types': summary_df['Log Type'].unique().tolist() if 'Log Type' in summary_df.columns else []
+            }
+            
+            return stats
+        except Exception:
+            return {
+                'total_channels': len(summary_df),
+                'max_temp': 0,
+                'min_temp': 0,
+                'avg_temp': 0,
+                'files_analyzed': 0,
+                'log_types': []
+            }
+
+# =============================================================================
+# 6. 圖表生成層 (Chart Generation Layer)
 # =============================================================================
 
 class ChartGenerator:
@@ -1082,7 +1437,6 @@ class ChartGenerator:
         ax1.tick_params(axis='y', labelcolor=color)
         ax1.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
         
-        # 設定左側Y軸範圍
         if left_y_limits:
             ax1.set_ylim(left_y_limits)
         
@@ -1093,7 +1447,6 @@ class ChartGenerator:
             ax2.plot(x_axis_seconds, df_chart['right_val'], color=color, linewidth=2)
             ax2.tick_params(axis='y', labelcolor=color)
             
-            # 設定右側Y軸範圍
             if right_y_limits:
                 ax2.set_ylim(right_y_limits)
         
@@ -1129,7 +1482,6 @@ class ChartGenerator:
         ax1.tick_params(axis='y', labelcolor=color)
         ax1.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
         
-        # 設定左側Y軸範圍
         if left_y_limits:
             ax1.set_ylim(left_y_limits)
         
@@ -1140,7 +1492,6 @@ class ChartGenerator:
             ax2.plot(x_axis_seconds, df_chart['right_val'], color=color, linewidth=1.5)
             ax2.tick_params(axis='y', labelcolor=color)
             
-            # 設定右側Y軸範圍
             if right_y_limits:
                 ax2.set_ylim(right_y_limits)
         
@@ -1170,7 +1521,6 @@ class ChartGenerator:
         for col in cols_to_plot:
             y_data = pd.to_numeric(df[col], errors='coerce')
             if not y_data.isna().all():
-                # 移除前綴顯示更友好的名稱
                 display_name = col.replace('YOKO: ', '') if col.startswith('YOKO: ') else col
                 ax.plot(df.index.total_seconds(), y_data, label=display_name, linewidth=1)
         
@@ -1190,7 +1540,7 @@ class ChartGenerator:
         return fig
 
 # =============================================================================
-# 6. UI渲染層 (UI Rendering Layer)
+# 7. UI渲染層 (UI Rendering Layer)
 # =============================================================================
 
 class GPUMonRenderer:
@@ -1201,8 +1551,13 @@ class GPUMonRenderer:
         self.stats_calc = StatisticsCalculator()
         self.chart_gen = ChartGenerator()
     
-    def render_controls(self):
+    def render_controls(self, file_index=None):
         """渲染控制面板"""
+        # 獲取當前檔案索引用於生成唯一key
+        if file_index is None:
+            file_index = getattr(st.session_state, 'current_file_index', 0)
+        key_prefix = f"gpu_{file_index}_"
+        
         st.sidebar.markdown("### ⚙️ GPUMon 圖表設定")
         
         numeric_columns = self.log_data.numeric_columns
@@ -1211,7 +1566,6 @@ class GPUMonRenderer:
         
         st.sidebar.markdown("#### 🎯 參數選擇")
         
-        # 尋找預設的左軸變數 (Temperature GPU)
         default_left_index = 0
         for i, col in enumerate(numeric_columns):
             if 'Temperature GPU' in col and '(C)' in col:
@@ -1221,10 +1575,10 @@ class GPUMonRenderer:
         left_y_axis = st.sidebar.selectbox(
             "📈 左側Y軸變數", 
             options=numeric_columns, 
-            index=default_left_index
+            index=default_left_index,
+            key=f"{key_prefix}left_y_axis"
         )
         
-        # 尋找預設的右軸變數 (TGP)
         right_y_axis_options = ['None'] + numeric_columns
         default_right_index = 0
         for i, col in enumerate(right_y_axis_options):
@@ -1235,7 +1589,8 @@ class GPUMonRenderer:
         right_y_axis = st.sidebar.selectbox(
             "📊 右側Y軸變數 (可選)", 
             options=right_y_axis_options, 
-            index=default_right_index
+            index=default_right_index,
+            key=f"{key_prefix}right_y_axis"
         )
         
         st.sidebar.markdown("#### ⏱️ 時間範圍設定")
@@ -1246,32 +1601,31 @@ class GPUMonRenderer:
             min_value=time_min,
             max_value=time_max,
             value=(time_min, time_max),
-            step=1.0
+            step=1.0,
+            key=f"{key_prefix}x_range"
         )
         
         st.sidebar.markdown("#### 📏 Y軸範圍設定")
         
-        # 左側Y軸範圍設定
-        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制")
+        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key=f"{key_prefix}left_y_range_enabled")
         left_y_range = None
         if left_y_range_enabled:
             col1, col2 = st.sidebar.columns(2)
             with col1:
-                left_y_min = st.number_input("左Y軸最小值", value=0.0, key="left_y_min")
+                left_y_min = st.number_input("左Y軸最小值", value=0.0, key=f"{key_prefix}left_y_min")
             with col2:
-                left_y_max = st.number_input("左Y軸最大值", value=100.0, key="left_y_max")
+                left_y_max = st.number_input("左Y軸最大值", value=100.0, key=f"{key_prefix}left_y_max")
             left_y_range = (left_y_min, left_y_max)
         
-        # 右側Y軸範圍設定（只有在選擇右軸變數時才顯示）
         right_y_range = None
         if right_y_axis and right_y_axis != 'None':
-            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制")
+            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key=f"{key_prefix}right_y_range_enabled")
             if right_y_range_enabled:
                 col1, col2 = st.sidebar.columns(2)
                 with col1:
-                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key="right_y_min")
+                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key=f"{key_prefix}right_y_min")
                 with col2:
-                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key="right_y_max")
+                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key=f"{key_prefix}right_y_max")
                 right_y_range = (right_y_min, right_y_max)
         
         return left_y_axis, right_y_axis, x_range, left_y_range, right_y_range
@@ -1296,7 +1650,6 @@ class GPUMonRenderer:
             self.log_data, x_range
         )
         
-        # 垂直排列顯示所有統計表格，避免併排放不下的問題
         if temp_stats is not None and not temp_stats.empty:
             st.markdown("#### 🌡️ GPU 溫度統計")
             st.dataframe(temp_stats, use_container_width=True, hide_index=True)
@@ -1313,25 +1666,21 @@ class GPUMonRenderer:
             st.markdown("#### 📊 GPU 使用率統計")
             st.dataframe(util_stats, use_container_width=True, hide_index=True)
     
-    def render(self):
+    def render(self, file_index=None):
         """渲染完整UI"""
         st.markdown("""
         <div class="gpumon-box">
-            <h4>🎮 GPUMon Log 成功解析！</h4>
+            <h4>🎮 GPUMon Log 解析完成！</h4>
             <p>已識別為GPU監控數據，包含溫度、功耗、頻率等指標</p>
         </div>
         """, unsafe_allow_html=True)
         
-        st.success(f"✅ 數據載入成功：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
+        st.success(f"📊 數據載入：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
         
-        # 渲染控制面板
-        left_col, right_col, x_range, left_y_range, right_y_range = self.render_controls()
+        left_col, right_col, x_range, left_y_range, right_y_range = self.render_controls(file_index)
         
         if left_col:
-            # 渲染圖表
             self.render_chart(left_col, right_col, x_range, left_y_range, right_y_range)
-            
-            # 渲染統計數據
             self.render_statistics(x_range)
 
 class PTATRenderer:
@@ -1342,8 +1691,13 @@ class PTATRenderer:
         self.stats_calc = StatisticsCalculator()
         self.chart_gen = ChartGenerator()
     
-    def render_controls(self):
+    def render_controls(self, file_index=None):
         """渲染控制面板"""
+        # 獲取當前檔案索引用於生成唯一key
+        if file_index is None:
+            file_index = getattr(st.session_state, 'current_file_index', 0)
+        key_prefix = f"ptat_{file_index}_"
+        
         st.sidebar.markdown("### ⚙️ PTAT 圖表設定")
         
         numeric_columns = self.log_data.numeric_columns
@@ -1352,16 +1706,14 @@ class PTATRenderer:
         
         st.sidebar.markdown("#### 🎯 參數選擇")
         
-        # 尋找預設的左軸變數 (MSR Package Temperature)
         default_left_index = 0
         for i, col in enumerate(numeric_columns):
             if 'MSR' in col and 'Package' in col and 'Temperature' in col:
                 default_left_index = i
                 break
         
-        left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=default_left_index)
+        left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=default_left_index, key=f"{key_prefix}left_y_axis")
         
-        # 尋找預設的右軸變數 (Package Power)
         right_y_axis_options = ['None'] + numeric_columns
         default_right_index = 0
         for i, col in enumerate(right_y_axis_options):
@@ -1369,62 +1721,57 @@ class PTATRenderer:
                 default_right_index = i
                 break
         
-        right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=default_right_index)
+        right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=default_right_index, key=f"{key_prefix}right_y_axis")
         
         st.sidebar.markdown("#### ⏱️ 時間範圍設定")
         
         time_min, time_max = self.log_data.get_time_range()
-        x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
+        x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0, key=f"{key_prefix}x_range")
         
         st.sidebar.markdown("#### 📏 Y軸範圍設定")
         
-        # 左側Y軸範圍設定
-        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="ptat_left_y")
+        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key=f"{key_prefix}left_y_range_enabled")
         left_y_range = None
         if left_y_range_enabled:
             col1, col2 = st.sidebar.columns(2)
             with col1:
-                left_y_min = st.number_input("左Y軸最小值", value=0.0, key="ptat_left_y_min")
+                left_y_min = st.number_input("左Y軸最小值", value=0.0, key=f"{key_prefix}left_y_min")
             with col2:
-                left_y_max = st.number_input("左Y軸最大值", value=100.0, key="ptat_left_y_max")
+                left_y_max = st.number_input("左Y軸最大值", value=100.0, key=f"{key_prefix}left_y_max")
             left_y_range = (left_y_min, left_y_max)
         
-        # 右側Y軸範圍設定（只有在選擇右軸變數時才顯示）
         right_y_range = None
         if right_y_axis and right_y_axis != 'None':
-            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="ptat_right_y")
+            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key=f"{key_prefix}right_y_range_enabled")
             if right_y_range_enabled:
                 col1, col2 = st.sidebar.columns(2)
                 with col1:
-                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key="ptat_right_y_min")
+                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key=f"{key_prefix}right_y_min")
                 with col2:
-                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key="ptat_right_y_max")
+                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key=f"{key_prefix}right_y_max")
                 right_y_range = (right_y_min, right_y_max)
         
         return left_y_axis, right_y_axis, x_range, left_y_range, right_y_range
     
-    def render(self):
+    def render(self, file_index=None):
         """渲染完整UI"""
         st.markdown("""
         <div class="info-box">
-            <h4>🖥️ PTAT Log 成功解析！</h4>
+            <h4>🖥️ PTAT Log 解析完成！</h4>
             <p>已識別為CPU性能監控數據，包含頻率、功耗、溫度等指標</p>
         </div>
         """, unsafe_allow_html=True)
         
-        st.success(f"✅ 數據載入成功：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
+        st.success(f"📊 數據載入：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
         
-        # 渲染控制面板
-        left_y_axis, right_y_axis, x_range, left_y_range, right_y_range = self.render_controls()
+        left_y_axis, right_y_axis, x_range, left_y_range, right_y_range = self.render_controls(file_index)
         
         if left_y_axis:
-            # 顯示圖表
             st.markdown("### 📊 PTAT CPU 性能監控圖表")
             chart = self.chart_gen.generate_flexible_chart(self.log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
             if chart:
                 st.pyplot(chart)
             
-            # 顯示統計數據 - 垂直排列
             st.markdown("### 📈 PTAT 統計數據")
             freq_stats, power_stats, temp_stats = self.stats_calc.calculate_ptat_stats(self.log_data, x_range)
             
@@ -1441,41 +1788,45 @@ class PTATRenderer:
                 st.dataframe(temp_stats, use_container_width=True, hide_index=True)
 
 class YokogawaRenderer:
-    """YOKOGAWA UI渲染器"""
+    """YOKOGAWA UI渲染器 - v10.3.8 超簡潔版"""
     
     def __init__(self, log_data: LogData):
         self.log_data = log_data
         self.stats_calc = StatisticsCalculator()
         self.chart_gen = ChartGenerator()
     
-    def render(self):
+    def render(self, file_index=None):
         """渲染完整UI"""
+        # 獲取當前檔案索引用於生成唯一key
+        if file_index is None:
+            file_index = getattr(st.session_state, 'current_file_index', 0)
+        key_prefix = f"yoko_{file_index}_"
+        
         st.markdown("""
         <div class="success-box">
-            <h4>📊 YOKOGAWA Log 成功解析！</h4>
-            <p>已識別為溫度記錄儀數據，支援多通道溫度監控</p>
+            <h4>📊 YOKOGAWA Log 解析完成！ (v10.3.8 多檔案獨立分析版)</h4>
+            <p>✨ 智能解析成功，界面清爽，詳細日誌已隱藏在下拉選單中</p>
         </div>
         """, unsafe_allow_html=True)
         
-        st.success(f"✅ 數據載入成功：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
+        st.success(f"📊 數據載入：{self.log_data.metadata.rows} 行 × {self.log_data.metadata.columns} 列")
         
-        # YOKOGAWA專用UI邏輯
         st.sidebar.markdown("### ⚙️ YOKOGAWA 圖表設定")
-        chart_mode = st.sidebar.radio("📈 圖表模式", ["全通道溫度圖", "自定義雙軸圖"])
+        chart_mode = st.sidebar.radio("📈 圖表模式", ["全通道溫度圖", "自定義雙軸圖"], key=f"{key_prefix}chart_mode")
         
         time_min, time_max = self.log_data.get_time_range()
-        x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
+        x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0, key=f"{key_prefix}x_range")
         
         if chart_mode == "全通道溫度圖":
             st.sidebar.markdown("#### 📏 Y軸範圍設定")
-            y_range_enabled = st.sidebar.checkbox("啟用Y軸範圍限制")
+            y_range_enabled = st.sidebar.checkbox("啟用Y軸範圍限制", key=f"{key_prefix}y_range_enabled")
             y_range = None
             if y_range_enabled:
                 col1, col2 = st.sidebar.columns(2)
                 with col1:
-                    y_min = st.number_input("Y軸最小值", value=0.0, key="yoko_single_y_min")
+                    y_min = st.number_input("Y軸最小值", value=0.0, key=f"{key_prefix}y_min")
                 with col2:
-                    y_max = st.number_input("Y軸最大值", value=100.0, key="yoko_single_y_max")
+                    y_max = st.number_input("Y軸最大值", value=100.0, key=f"{key_prefix}y_max")
                 y_range = (y_min, y_max)
             
             st.markdown("### 📊 YOKOGAWA 全通道溫度圖表")
@@ -1487,33 +1838,31 @@ class YokogawaRenderer:
             numeric_columns = self.log_data.numeric_columns
             if numeric_columns:
                 st.sidebar.markdown("#### 🎯 參數選擇")
-                left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=0)
+                left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=0, key=f"{key_prefix}left_y_axis")
                 right_y_axis_options = ['None'] + numeric_columns
-                right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=0)
+                right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=0, key=f"{key_prefix}right_y_axis")
                 
                 st.sidebar.markdown("#### 📏 Y軸範圍設定")
                 
-                # 左側Y軸範圍設定
-                left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="yoko_left_y")
+                left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key=f"{key_prefix}left_y_range_enabled")
                 left_y_range = None
                 if left_y_range_enabled:
                     col1, col2 = st.sidebar.columns(2)
                     with col1:
-                        left_y_min = st.number_input("左Y軸最小值", value=0.0, key="yoko_left_y_min")
+                        left_y_min = st.number_input("左Y軸最小值", value=0.0, key=f"{key_prefix}left_y_min")
                     with col2:
-                        left_y_max = st.number_input("左Y軸最大值", value=100.0, key="yoko_left_y_max")
+                        left_y_max = st.number_input("左Y軸最大值", value=100.0, key=f"{key_prefix}left_y_max")
                     left_y_range = (left_y_min, left_y_max)
                 
-                # 右側Y軸範圍設定（只有在選擇右軸變數時才顯示）
                 right_y_range = None
                 if right_y_axis and right_y_axis != 'None':
-                    right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="yoko_right_y")
+                    right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key=f"{key_prefix}right_y_range_enabled")
                     if right_y_range_enabled:
                         col1, col2 = st.sidebar.columns(2)
                         with col1:
-                            right_y_min = st.number_input("右Y軸最小值", value=0.0, key="yoko_right_y_min")
+                            right_y_min = st.number_input("右Y軸最小值", value=0.0, key=f"{key_prefix}right_y_min")
                         with col2:
-                            right_y_max = st.number_input("右Y軸最大值", value=100.0, key="yoko_right_y_max")
+                            right_y_max = st.number_input("右Y軸最大值", value=100.0, key=f"{key_prefix}right_y_max")
                         right_y_range = (right_y_min, right_y_max)
                 
                 st.markdown("### 📊 YOKOGAWA 自定義圖表")
@@ -1521,14 +1870,143 @@ class YokogawaRenderer:
                 if chart:
                     st.pyplot(chart)
         
-        # 顯示溫度統計
         st.markdown("### 📈 溫度統計數據")
         temp_stats = self.stats_calc.calculate_temp_stats(self.log_data, x_range)
         if not temp_stats.empty:
             st.dataframe(temp_stats, use_container_width=True, hide_index=True)
 
+class SummaryRenderer:
+    """Summary UI渲染器 - v10.3.8簡化版 (僅保留HTML帶表格框的數據呈現)"""
+    
+    def __init__(self, log_data_list: List[LogData]):
+        self.log_data_list = log_data_list
+        self.summary_gen = TemperatureSummaryGenerator()
+    
+    def render(self):
+        """渲染Summary標籤頁內容 - 簡化版"""
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 1.5rem; border-radius: 10px; margin-bottom: 2rem; color: white;">
+            <h3>📋 溫度整合摘要報告</h3>
+            <p>🎯 整合所有檔案的溫度數據，按照標準格式顯示最高溫度</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 生成摘要表格
+        summary_df = self.summary_gen.generate_summary_table(self.log_data_list)
+        
+        if summary_df.empty:
+            st.warning("⚠️ 沒有找到可用的溫度數據")
+            return
+        
+        # 顯示檔案來源信息
+        stats = self.summary_gen.get_summary_statistics(summary_df)
+        if 'log_types' in stats and stats['log_types']:
+            with st.expander("📂 檔案來源詳情", expanded=False):
+                unique_files = summary_df['Source File'].unique() if 'Source File' in summary_df.columns else []
+                for i, filename in enumerate(unique_files, 1):
+                    file_data = summary_df[summary_df['Source File'] == filename] if 'Source File' in summary_df.columns else pd.DataFrame()
+                    if not file_data.empty:
+                        log_type = file_data['Log Type'].iloc[0] if 'Log Type' in file_data.columns else 'Unknown'
+                        channel_count = len(file_data)
+                        
+                        # 添加類型emoji
+                        if "GPUMon" in log_type:
+                            emoji = "🎮"
+                        elif "PTAT" in log_type:
+                            emoji = "🖥️"
+                        elif "YOKOGAWA" in log_type:
+                            emoji = "📊"
+                        else:
+                            emoji = "📄"
+                        
+                        st.write(f"**{i}.** {emoji} `{filename}` ({log_type}) - {channel_count} 個監控點")
+        
+        # 顯示整合表格
+        st.markdown("### 📋 溫度監控點整合表格")
+        
+        # 格式化顯示表格
+        display_df = self.summary_gen.format_summary_table_for_display(summary_df)
+        
+        if not display_df.empty:
+            # 準備HTML表格
+            html_table = self._prepare_html_table(display_df)
+            
+            # HTML表格預覽（預設開啟）
+            with st.expander("🔍 HTML表格預覽（可直接複製）", expanded=True):
+                st.markdown("**以下是帶邊框的HTML表格，可直接選中複製：**")
+                st.markdown(html_table, unsafe_allow_html=True)
+                st.info("💡 提示：在上方表格上按住滑鼠左鍵拖拽選中整個表格，然後Ctrl+C複製，到Word中Ctrl+V貼上")
+        
+        else:
+            st.error("❌ 無法生成摘要表格")
+    
+    def _prepare_html_table(self, display_df: pd.DataFrame) -> str:
+        """準備帶邊框的HTML表格格式"""
+        if display_df.empty:
+            return ""
+        
+        # 創建HTML表格
+        html_parts = []
+        
+        # 添加CSS樣式
+        html_parts.append("""
+        <style>
+        .temp-table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 10px 0;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+        }
+        .temp-table th, .temp-table td {
+            border: 1px solid #333333;
+            padding: 8px;
+            text-align: center;
+            vertical-align: middle;
+        }
+        .temp-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+            color: #333333;
+        }
+        .temp-table td {
+            background-color: #ffffff;
+        }
+        .temp-table tr:nth-child(even) td {
+            background-color: #f9f9f9;
+        }
+        </style>
+        """)
+        
+        # 開始表格
+        html_parts.append('<table class="temp-table">')
+        
+        # 表格標題行
+        html_parts.append('<thead>')
+        html_parts.append('<tr>')
+        for header in display_df.columns:
+            html_parts.append(f'<th>{header}</th>')
+        html_parts.append('</tr>')
+        html_parts.append('</thead>')
+        
+        # 表格數據行
+        html_parts.append('<tbody>')
+        for _, row in display_df.iterrows():
+            html_parts.append('<tr>')
+            for value in row:
+                # 處理空值
+                cell_value = str(value) if pd.notna(value) else ""
+                html_parts.append(f'<td>{cell_value}</td>')
+            html_parts.append('</tr>')
+        html_parts.append('</tbody>')
+        
+        # 結束表格
+        html_parts.append('</table>')
+        
+        return "\n".join(html_parts)
+
 # =============================================================================
-# 7. UI工廠 (UI Factory)
+# 8. UI工廠 (UI Factory)
 # =============================================================================
 
 class RendererFactory:
@@ -1549,7 +2027,7 @@ class RendererFactory:
             return None
 
 # =============================================================================
-# 8. 主應用程式 (Main Application)
+# 9. 主應用程式 (Main Application) - v10.3.8 多檔案獨立分析 + Summary整合版 (簡化版)
 # =============================================================================
 
 def display_version_info():
@@ -1558,27 +2036,25 @@ def display_version_info():
         st.markdown(f"""
         **當前版本：{VERSION}** | **發布日期：{VERSION_DATE}**
         
-        ### 🆕 v10.2 Dual-Axis Range Control 更新內容：
-        - 📏 **全面雙軸Y範圍控制** - 所有Log類型都支援左右Y軸範圍調整
-        - 🎮 **GPUMon Y軸控制** - 獨立控制左右Y軸顯示範圍
-        - 🖥️ **PTAT Y軸控制** - 支援CPU監控數據的雙軸範圍調整
-        - 📊 **YOKOGAWA Y軸控制** - 溫度記錄儀數據的靈活範圍設定
-        - 🔵🔴 **視覺化標示** - 藍色圓點標示左軸，紅色圓點標示右軸
-        - 🔋 **功耗統計優化** - 保持核心功耗指標顯示
+        ### ✨ 主要功能
         
-        ### 🏗️ 架構優勢：
-        - 分層架構設計，高擴展性
-        - 可插拔解析器系統
-        - UI組件化渲染
-        - 統一數據模型
-        - 智能功耗項目過濾
+        - **🎮 GPUMon Log** - GPU性能監控數據解析與視覺化
+        - **🖥️ PTAT Log** - CPU性能監控數據解析與視覺化  
+        - **📊 YOKOGAWA Log** - 多通道溫度記錄儀數據解析與視覺化
+        - **📋 Summary整合** - 多檔案溫度數據整合，生成帶邊框HTML表格
+        - **📈 獨立分析** - 每個檔案都有專屬的圖表控制和統計分析
         
-        ---
-        💡 **功耗統計焦點：** 現在只顯示最關鍵的功耗指標，讓數據分析更聚焦！
+        ### 🎯 核心特色
+        
+        - **智能解析** - 自動識別不同類型的Log檔案格式
+        - **多檔案支援** - 同時處理多個檔案，獨立分析
+        - **帶邊框表格** - Summary頁面提供可直接複製到Word的HTML表格
+        - **即時互動** - 時間範圍和參數調整即時更新圖表數據
         """)
 
+
 def main():
-    """主程式 - v10.2 Dual-Axis Range Control"""
+    """主程式 - v10.3.8 Multi-File Analysis with Summary (Simplified)"""
     st.set_page_config(
         page_title="溫度數據視覺化平台",
         page_icon="📊",
@@ -1627,6 +2103,17 @@ def main():
             border-radius: 0.25rem;
             border: 1px solid #dee2e6;
         }
+        .temp-summary-table {
+            font-size: 0.9em;
+        }
+        .temp-summary-table th {
+            background-color: #f0f2f6;
+            font-weight: bold;
+            text-align: center;
+        }
+        .temp-summary-table td {
+            text-align: center;
+        }
     </style>
     """, unsafe_allow_html=True)
     
@@ -1634,7 +2121,7 @@ def main():
     st.markdown(f"""
     <div class="main-header">
         <h1>📊 溫度數據視覺化平台</h1>
-        <p>智能解析 YOKOGAWA、PTAT、GPUMon Log 文件，提供數據分析與視覺化</p>
+        <p>智能解析 YOKOGAWA、PTAT、GPUMon Log 文件 | 多檔案獨立分析 + Summary整合 (簡化版)</p>
         <p><strong>{VERSION}</strong> | {VERSION_DATE}</p>
     </div>
     """, unsafe_allow_html=True)
@@ -1655,10 +2142,10 @@ def main():
         "📁 上傳Log File (可多選)", 
         type=['csv', 'xlsx'], 
         accept_multiple_files=True,
-        help="支援 YOKOGAWA Excel、PTAT CSV、GPUMon CSV 格式"
+        help="v10.3.8 簡化版：多檔案獨立分析 + Summary整合，專注帶邊框表格複製"
     )
     
-    # ★★★ 顯示訪問計數器 ★★★
+    # 顯示訪問計數器
     display_visit_counter()
     
     if uploaded_files:
@@ -1671,9 +2158,7 @@ def main():
         
         st.sidebar.markdown("---")
         
-        # 解析檔案
-        st.markdown("### 🔍 檔案解析調試資訊")
-        
+        # 解析檔案 - 超簡潔版本
         log_data_list = []
         for uploaded_file in uploaded_files:
             log_data = parser_registry.parse_file(uploaded_file)
@@ -1684,143 +2169,110 @@ def main():
             st.error("❌ 無法解析任何檔案")
             return
         
-        # 根據檔案數量和類型決定UI模式
+        # 根據檔案數量決定UI模式
         if len(log_data_list) == 1:
+            # 單檔案模式
             log_data = log_data_list[0]
             renderer = RendererFactory.create_renderer(log_data)
             
             if renderer:
-                renderer.render()
+                renderer.render(file_index=0)
             else:
                 st.error(f"不支援的Log類型: {log_data.metadata.log_type}")
         
         else:
-            st.info("📊 多檔案模式，使用基本分析功能")
+            # 多檔案模式 - 每個檔案獨立顯示 + Summary整合
+            st.success(f"📊 多檔案分析模式：成功解析 {len(log_data_list)} 個檔案")
             
-            # 多檔案合併邏輯
-            if len(log_data_list) > 1:
-                try:
-                    combined_df = pd.concat([log_data.df for log_data in log_data_list], axis=1)
-                    
-                    # 創建合併的LogData
-                    combined_metadata = LogMetadata(
-                        filename="合併檔案",
-                        log_type="混合類型",
-                        rows=combined_df.shape[0],
-                        columns=combined_df.shape[1],
-                        time_range=f"{combined_df.index.min()} 到 {combined_df.index.max()}",
-                        file_size_kb=sum(log_data.metadata.file_size_kb for log_data in log_data_list)
-                    )
-                    
-                    combined_log_data = LogData(combined_df, combined_metadata)
-                    
-                    st.success(f"✅ 合併數據載入成功：{combined_log_data.metadata.rows} 行 × {combined_log_data.metadata.columns} 列")
-                    
-                    numeric_columns = combined_log_data.numeric_columns
-                    if numeric_columns:
-                        st.sidebar.markdown("### ⚙️ 圖表設定")
-                        left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=0)
-                        right_y_axis_options = ['None'] + numeric_columns
-                        right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=0)
-                        
-                        time_min, time_max = combined_log_data.get_time_range()
-                        x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
-                        
-                        # Y軸範圍控制
-                        st.sidebar.markdown("#### 📏 Y軸範圍設定")
-                        
-                        # 左側Y軸範圍設定
-                        left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="combined_left_y")
-                        left_y_range = None
-                        if left_y_range_enabled:
-                            col1, col2 = st.sidebar.columns(2)
-                            with col1:
-                                left_y_min = st.number_input("左Y軸最小值", value=0.0, key="combined_left_y_min")
-                            with col2:
-                                left_y_max = st.number_input("左Y軸最大值", value=100.0, key="combined_left_y_max")
-                            left_y_range = (left_y_min, left_y_max)
-                        
-                        # 右側Y軸範圍設定
-                        right_y_range = None
-                        if right_y_axis and right_y_axis != 'None':
-                            right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="combined_right_y")
-                            if right_y_range_enabled:
-                                col1, col2 = st.sidebar.columns(2)
-                                with col1:
-                                    right_y_min = st.number_input("右Y軸最小值", value=0.0, key="combined_right_y_min")
-                                with col2:
-                                    right_y_max = st.number_input("右Y軸最大值", value=100.0, key="combined_right_y_max")
-                                right_y_range = (right_y_min, right_y_max)
-                        
-                        st.markdown("### 📊 綜合數據圖表")
-                        chart_gen = ChartGenerator()
-                        chart = chart_gen.generate_flexible_chart(combined_log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
-                        if chart:
-                            st.pyplot(chart)
-                        
-                        # 顯示基本統計數據
-                        st.markdown("### 📈 基本統計數據")
-                        stats_calc = StatisticsCalculator()
-                        temp_stats = stats_calc.calculate_temp_stats(combined_log_data, x_range)
-                        if not temp_stats.empty:
-                            st.dataframe(temp_stats, use_container_width=True, hide_index=True)
-                
-                except Exception as e:
-                    st.error(f"合併數據時出錯: {e}")
+            # 創建標籤頁，每個檔案一個標籤 + Summary標籤
+            tab_names = []
             
-            else:
-                # 單檔案但不是已知類型的情況
-                log_data = log_data_list[0]
-                st.success(f"✅ 數據載入成功：{log_data.metadata.rows} 行 × {log_data.metadata.columns} 列")
+            # 首先添加Summary標籤
+            tab_names.append("📋 Summary")
+            
+            # 然後添加各個檔案的標籤
+            for i, log_data in enumerate(log_data_list):
+                # 生成標籤名稱
+                filename = log_data.metadata.filename
+                log_type = log_data.metadata.log_type
                 
-                numeric_columns = log_data.numeric_columns
-                if numeric_columns:
-                    st.sidebar.markdown("### ⚙️ 圖表設定")
-                    left_y_axis = st.sidebar.selectbox("📈 左側Y軸變數", options=numeric_columns, index=0)
-                    right_y_axis_options = ['None'] + numeric_columns
-                    right_y_axis = st.sidebar.selectbox("📊 右側Y軸變數 (可選)", options=right_y_axis_options, index=0)
+                # 縮短檔案名稱以適應標籤顯示
+                short_name = filename
+                if len(filename) > 15:
+                    name_parts = filename.split('.')
+                    if len(name_parts) > 1:
+                        short_name = name_parts[0][:12] + "..." + name_parts[-1]
+                    else:
+                        short_name = filename[:12] + "..."
+                
+                # 添加類型emoji
+                if "GPUMon" in log_type:
+                    tab_name = f"🎮 {short_name}"
+                elif "PTAT" in log_type:
+                    tab_name = f"🖥️ {short_name}"
+                elif "YOKOGAWA" in log_type:
+                    tab_name = f"📊 {short_name}"
+                else:
+                    tab_name = f"📄 {short_name}"
+                
+                tab_names.append(tab_name)
+            
+            # 創建標籤頁
+            tabs = st.tabs(tab_names)
+            
+            # 首先渲染Summary標籤頁
+            with tabs[0]:
+                summary_renderer = SummaryRenderer(log_data_list)
+                summary_renderer.render()
+            
+            # 然後為每個檔案渲染獨立的內容
+            for i, (tab, log_data) in enumerate(zip(tabs[1:], log_data_list)):
+                with tab:
+                    # 顯示檔案資訊
+                    st.markdown(f"""
+                    <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #1f77b4;">
+                        <h4>📁 檔案資訊</h4>
+                        <p><strong>檔案名稱：</strong> {log_data.metadata.filename}</p>
+                        <p><strong>檔案類型：</strong> {log_data.metadata.log_type}</p>
+                        <p><strong>數據規模：</strong> {log_data.metadata.rows} 行 × {log_data.metadata.columns} 列</p>
+                        <p><strong>檔案大小：</strong> {log_data.metadata.file_size_kb:.1f} KB</p>
+                        <p><strong>時間範圍：</strong> {log_data.metadata.time_range}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    time_min, time_max = log_data.get_time_range()
-                    x_range = st.sidebar.slider("選擇時間範圍 (秒)", min_value=time_min, max_value=time_max, value=(time_min, time_max), step=1.0)
+                    # 為每個檔案創建獨立的渲染器
+                    renderer = RendererFactory.create_renderer(log_data)
                     
-                    # Y軸範圍控制
-                    st.sidebar.markdown("#### 📏 Y軸範圍設定")
-                    
-                    # 左側Y軸範圍設定
-                    left_y_range_enabled = st.sidebar.checkbox("🔵 啟用左側Y軸範圍限制", key="single_left_y")
-                    left_y_range = None
-                    if left_y_range_enabled:
-                        col1, col2 = st.sidebar.columns(2)
-                        with col1:
-                            left_y_min = st.number_input("左Y軸最小值", value=0.0, key="single_left_y_min")
-                        with col2:
-                            left_y_max = st.number_input("左Y軸最大值", value=100.0, key="single_left_y_max")
-                        left_y_range = (left_y_min, left_y_max)
-                    
-                    # 右側Y軸範圍設定
-                    right_y_range = None
-                    if right_y_axis and right_y_axis != 'None':
-                        right_y_range_enabled = st.sidebar.checkbox("🔴 啟用右側Y軸範圍限制", key="single_right_y")
-                        if right_y_range_enabled:
-                            col1, col2 = st.sidebar.columns(2)
-                            with col1:
-                                right_y_min = st.number_input("右Y軸最小值", value=0.0, key="single_right_y_min")
-                            with col2:
-                                right_y_max = st.number_input("右Y軸最大值", value=100.0, key="single_right_y_max")
-                            right_y_range = (right_y_min, right_y_max)
-                    
-                    st.markdown("### 📊 數據圖表")
-                    chart_gen = ChartGenerator()
-                    chart = chart_gen.generate_flexible_chart(log_data, left_y_axis, right_y_axis, x_range, left_y_range, right_y_range)
-                    if chart:
-                        st.pyplot(chart)
-                    
-                    # 顯示基本統計數據
-                    st.markdown("### 📈 基本統計數據")
-                    stats_calc = StatisticsCalculator()
-                    temp_stats = stats_calc.calculate_temp_stats(log_data, x_range)
-                    if not temp_stats.empty:
-                        st.dataframe(temp_stats, use_container_width=True, hide_index=True)
+                    if renderer:
+                        # 渲染該檔案的完整UI，傳遞正確的file_index
+                        renderer.render(file_index=i)
+                        
+                    else:
+                        st.error(f"不支援的Log類型: {log_data.metadata.log_type}")
+                        
+                        # 顯示基本信息作為備用
+                        st.markdown("### 📊 基本數據預覽")
+                        if not log_data.df.empty:
+                            st.write("**欄位列表：**")
+                            for col in log_data.df.columns:
+                                st.write(f"- {col}")
+                            
+                            st.write("**數據樣本（前5行）：**")
+                            st.dataframe(log_data.df.head(), use_container_width=True)
+            
+            # 在標籤頁外提供檔案選擇器（用於側邊欄控制）
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🎛️ 多檔案控制")
+            
+            selected_file_index = st.sidebar.selectbox(
+                "選擇要控制的檔案",
+                options=range(len(log_data_list)),
+                format_func=lambda x: f"{log_data_list[x].metadata.filename} ({log_data_list[x].metadata.log_type})",
+                help="選擇要在側邊欄中控制的檔案"
+            )
+            
+            st.sidebar.info(f"💡 當前選擇：{log_data_list[selected_file_index].metadata.filename}")
+            # 注意：這個選擇器主要用於顯示信息，實際的控制是在各個tab中獨立進行的
     
     else:
         st.info("🚀 **開始使用** - 請在左側上傳您的 Log 文件進行分析")
@@ -1832,15 +2284,23 @@ def main():
         - **🖥️ PTAT CSV** - CPU性能監控數據（頻率、功耗、溫度）
         - **📊 YOKOGAWA Excel/CSV** - 多通道溫度記錄儀數據
         
-        ### 🔍 v10.2 Dual-Axis Range Control 新功能
+        ### ✨ 主要功能
         
-        - **📏 全面雙軸Y範圍控制** - 所有Log類型都支援左右Y軸範圍調整
-        - **🎯 精確圖表控制** - GPUMon、PTAT、YOKOGAWA全部支援Y軸獨立調整
-        - **🔋 功耗統計優化** - PTAT 4項核心功耗，GPUMon 3項關鍵功耗
-        - **🔵🔴 視覺化標示** - 藍色圓點標示左軸，紅色圓點標示右軸
-        - **🎨 智能UI控制** - 只有選擇右軸變數時才顯示右軸範圍設定
-        - **訪問統計** - 持續追蹤平台使用情況和趨勢
+        - **📋 智能解析** - 自動識別不同類型的Log檔案格式
+        - **🎯 多檔案分析** - 同時上傳多個檔案，每個檔案獨立分析
+        - **📊 即時互動** - 時間範圍和參數調整即時更新圖表
+        - **📋 Summary整合** - 所有溫度數據整合成帶邊框HTML表格
+        - **💾 一鍵複製** - HTML表格可直接複製到Word保留格式
+        
+        ### 🎯 使用流程
+        
+        1. **上傳檔案** - 在左側選擇一個或多個Log檔案
+        2. **查看分析** - 每個檔案都有專屬的標籤頁和圖表控制
+        3. **整合報告** - 在Summary標籤頁查看所有溫度數據整合表格
+        4. **複製使用** - 直接複製HTML表格到Word或Excel
         """)
+
 
 if __name__ == "__main__":
     main()
+
