@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import io
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Optional, Any
@@ -19,11 +19,11 @@ VERSION = "v10.3.8 Multi-File Analysis with Summary (Optimized + Fixed Copy with
 VERSION_DATE = "2025年6月"
 
 # =============================================================================
-# 0. 訪問計數器 (Visit Counter)
+# 0. 訪問計數器 (Visit Counter) - 修復版本
 # =============================================================================
 
 class VisitCounter:
-    """訪問計數器"""
+    """訪問計數器 - 修復版本"""
     
     def __init__(self, counter_file="visit_counter.json"):
         self.counter_file = counter_file
@@ -85,10 +85,11 @@ class VisitCounter:
         self._save_counter()
     
     def _cleanup_old_records(self):
-        """清理30天前的日訪問記錄"""
+        """清理30天前的日訪問記錄 - 修復版本"""
         try:
             today = date.today()
-            cutoff_date = today.replace(day=today.day-30) if today.day > 30 else today.replace(month=today.month-1, day=30)
+            # 使用 timedelta 正確計算30天前的日期
+            cutoff_date = today - timedelta(days=30)
             cutoff_str = cutoff_date.strftime("%Y-%m-%d")
             
             # 移除30天前的記錄
@@ -99,20 +100,25 @@ class VisitCounter:
             pass
     
     def get_stats(self) -> dict:
-        """獲取統計信息"""
-        today = date.today().strftime("%Y-%m-%d")
-        yesterday = (date.today().replace(day=date.today().day-1)).strftime("%Y-%m-%d") if date.today().day > 1 else None
+        """獲取統計信息 - 修復版本"""
+        today = date.today()
+        today_str = today.strftime("%Y-%m-%d")
         
-        # 計算最近7天訪問量
+        # 使用 timedelta 正確計算昨天的日期
+        yesterday = today - timedelta(days=1)
+        yesterday_str = yesterday.strftime("%Y-%m-%d")
+        
+        # 計算最近7天訪問量 - 使用 timedelta
         recent_7_days = 0
         for i in range(7):
-            check_date = (date.today().replace(day=date.today().day-i)).strftime("%Y-%m-%d")
-            recent_7_days += self.data["daily_visits"].get(check_date, 0)
+            check_date = today - timedelta(days=i)
+            check_date_str = check_date.strftime("%Y-%m-%d")
+            recent_7_days += self.data["daily_visits"].get(check_date_str, 0)
         
         return {
             "total_visits": self.data["total_visits"],
-            "today_visits": self.data["daily_visits"].get(today, 0),
-            "yesterday_visits": self.data["daily_visits"].get(yesterday, 0) if yesterday else 0,
+            "today_visits": self.data["daily_visits"].get(today_str, 0),
+            "yesterday_visits": self.data["daily_visits"].get(yesterday_str, 0),
             "recent_7_days": recent_7_days,
             "first_visit": self.data["first_visit"],
             "last_visit": self.data["last_visit"],
@@ -120,7 +126,7 @@ class VisitCounter:
         }
 
 def display_visit_counter():
-    """顯示訪問計數器"""
+    """顯示訪問計數器 - 修復版本"""
     # 初始化計數器
     if 'visit_counter' not in st.session_state:
         st.session_state.visit_counter = VisitCounter()
@@ -181,10 +187,11 @@ def display_visit_counter():
             
             st.write(f"📊 **平均每日：** {stats['total_visits'] / max(stats['active_days'], 1):.1f} 次")
             
-            # 顯示最近幾天的訪問趨勢
+            # 顯示最近幾天的訪問趨勢 - 使用 timedelta 修復版本
             recent_data = []
+            today = date.today()
             for i in range(6, -1, -1):  # 最近7天，倒序
-                check_date = date.today().replace(day=date.today().day-i) if date.today().day > i else date.today().replace(month=date.today().month-1, day=30-i+date.today().day)
+                check_date = today - timedelta(days=i)
                 date_str = check_date.strftime("%Y-%m-%d")
                 visits = st.session_state.visit_counter.data["daily_visits"].get(date_str, 0)
                 recent_data.append({
@@ -2303,4 +2310,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
