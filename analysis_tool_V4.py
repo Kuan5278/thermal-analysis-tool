@@ -1,5 +1,5 @@
 # thermal_analysis_platform_v10.3.8_optimized_fixed.py
-# 溫度數據視覺化平台 - v10.3.8 多檔案獨立分析 + Summary整合版 (優化版 + 修復一鍵複製)
+# 溫度數據視覺化平台 - v10.3.8 多檔案獨立分析 + Summary整合版 (優化版 + 修復重複欄位名稱)
 
 import streamlit as st
 import pandas as pd
@@ -15,8 +15,8 @@ import json
 import os
 
 # 版本資訊
-VERSION = "v10.3.8 Multi-File Analysis with Summary (Optimized + Fixed Copy with Borders)"
-VERSION_DATE = "2025年6月"
+VERSION = "v10.3.8 Multi-File Analysis with Summary (Optimized + Fixed Copy with Borders + Unique Column Fix)"
+VERSION_DATE = "2025年9月"
 
 # =============================================================================
 # 0. 訪問計數器 (Visit Counter) - 修復版本
@@ -630,8 +630,8 @@ class YokogawaParser(LogParser):
                     self.logger.debug(f"嘗試header_row={header_row}, 形狀: {df.shape}")
                     
                     time_candidates = ['Time', 'TIME', 'time', 'Date', 'DATE', 'date', 
-                                     'DateTime', 'DATETIME', 'datetime', '時間', '日期時間',
-                                     'Timestamp', 'TIMESTAMP', 'timestamp']
+                                       'DateTime', 'DATETIME', 'datetime', '時間', '日期時間',
+                                       'Timestamp', 'TIMESTAMP', 'timestamp']
                     
                     for candidate in time_candidates:
                         if candidate in df.columns:
@@ -849,11 +849,11 @@ class YokogawaParser(LogParser):
             return True
             
         return False
-    
+
     def _perform_renaming(self, df: pd.DataFrame, ch_row: pd.Series, tag_row: pd.Series) -> pd.DataFrame:
-        """靜默執行重命名邏輯"""
+        """靜默執行重命名邏輯 - 已修復重複欄位名稱問題"""
         self.logger.debug("開始智能重命名處理")
-        
+
         # 保護關鍵欄位
         protected_columns = {
             'Date', 'TIME', 'Time', 'time', 'DATE', 'date',
@@ -863,6 +863,7 @@ class YokogawaParser(LogParser):
         }
         
         new_column_names = {}
+        final_names_used = [] # <--- 修正：新增一個列表來追蹤已使用的名稱
         tag_used = 0
         ch_used = 0
         protected_count = 0
@@ -874,6 +875,7 @@ class YokogawaParser(LogParser):
                 final_name = original_col
                 protected_count += 1
                 new_column_names[original_col] = final_name
+                final_names_used.append(final_name) # <--- 修正：追蹤已使用的名稱
                 continue
             
             # 獲取Tag值
@@ -891,15 +893,24 @@ class YokogawaParser(LogParser):
                     ch_name = str(ch_val).strip()
             
             # 決定最終名稱
+            base_final_name = original_col # 預設使用原始名稱
             if tag_name:
-                final_name = tag_name
+                base_final_name = tag_name
                 tag_used += 1
             elif ch_name:
-                final_name = ch_name
+                base_final_name = ch_name
                 ch_used += 1
             else:
-                final_name = original_col
                 original_kept += 1
+
+            # --- 開始修正：處理重複名稱的邏輯 ---
+            final_name = base_final_name
+            counter = 1
+            while final_name in final_names_used:
+                final_name = f"{base_final_name}_{counter}"
+                counter += 1
+            final_names_used.append(final_name)
+            # --- 結束修正 ---
             
             new_column_names[original_col] = final_name
         
@@ -909,7 +920,7 @@ class YokogawaParser(LogParser):
         self.logger.debug(f"重命名完成: Tag={tag_used}, CH={ch_used}, 保護={protected_count}, 原名={original_kept}")
         
         return df
-    
+
     def _process_time_and_finalize(self, df: pd.DataFrame, time_column: str, file_content: io.BytesIO, filename: str) -> Optional[LogData]:
         """處理時間並完成解析"""
         self.logger.debug("處理時間數據")
